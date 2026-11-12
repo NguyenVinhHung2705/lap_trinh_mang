@@ -348,3 +348,4 @@ class _PlanItemCard extends StatelessWidget {
     return v.toStringAsFixed(2);
   }
 }
+

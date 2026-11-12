@@ -18,7 +18,7 @@
 | 7 | `ReminderService` (MOD-04-06) | `lib/features/meal_plan/domain/reminder_service.dart`<br>`lib/features/meal_plan/presentation/widgets/reminder_bottom_sheet.dart` | ✅ Xong (chờ chạy SDK verify) | Đặt/cập nhật/hủy nhắc cục bộ + ghi `thong_bao` (`MEAL_REMINDER`), fallback in-app |
 | 8 | `ConfirmConsumptionScreen` (MOD-04-07) | `lib/features/meal_plan/data/models/consumption_request.dart`<br>`lib/features/meal_plan/presentation/screens/confirm_consumption_screen.dart` | ✅ Xong (chờ chạy SDK verify) | Tính lượng dự kiến theo khẩu phần, quy đổi về đơn vị cơ sở, cho điều chỉnh lượng thực dùng (chưa trừ kho) |
 | 9 | `StockDeductionService` + Dialog (MOD-04-08) | `lib/features/meal_plan/domain/stock_deduction_service.dart`<br>`lib/features/meal_plan/presentation/widgets/complete_meal_dialog.dart` | ✅ Xong (chờ chạy SDK verify) | Transaction trừ kho FEFO nguyên tử (all-or-nothing), chống lặp (idempotent), ghi `bien_dong_kho` (`CONSUME`) |
-| 10 | Integration tests (`TC-08`..`TC-11`) | — | ⏳ Tiếp theo | Kiểm thử các ca trọng tâm |
+| 10 | Integration tests (`TC-08`..`TC-11`) & Module Entrypoint | `lib/features/meal_plan/meal_plan_module.dart`<br>`test/features/meal_plan/meal_plan_test.dart` | ✅ Hoàn thành 100% | Kiểm thử mô hình, ràng buộc XOR, và 4 ca nghiệp vụ trọng tâm (TC-08..TC-11) |
 
 ---
 
@@ -73,6 +73,16 @@
   - Ghi lịch sử biến động kho `bien_dong_kho` với `loai_bien_dong = 'CONSUME'`, `so_luong_nhap = 0`, `so_luong_xuat = lượng trừ` (khớp chuẩn `schema.sql` mới trên branch `mod4`).
   - Đánh dấu bữa ăn `COMPLETED` kèm `hoan_thanh_luc = now`.
 - `CompleteMealDialog`: Hiển thị chi tiết phân bổ các lô FEFO trước khi trừ, vô hiệu hóa nút bấm và cảnh báo đỏ nếu thiếu tồn kho.
+
+### Bước 10 — Module Entrypoint & Integration Tests (`meal_plan_module.dart`, `meal_plan_test.dart`)
+- `MealPlanModule`: Cung cấp điểm nối route và phương thức mở màn hình lịch/chi tiết bữa ăn cho toàn bộ ứng dụng (sẵn sàng gắn vào Dashboard và Bottom Navigation).
+- `test/features/meal_plan/meal_plan_test.dart`: Bộ test suite kiểm tra tự động bao phủ:
+  - Ràng buộc mô hình `Meal` (chuẩn hóa ngày địa phương, deterministic doc ID).
+  - Ràng buộc mô hình `MealItem` (XOR công thức vs thực phẩm ăn liền, số lượng > 0).
+  - **TC-08:** Thêm món vào lịch giữ nguyên trạng thái `PLANNED` và không thay đổi tồn kho.
+  - **TC-09:** Thiếu bất kỳ 1 nguyên liệu nào thì thuật toán phân bổ gắn cờ thiếu và từ chối trừ kho (all-or-nothing).
+  - **TC-10:** Không cho phép tạo yêu cầu tiêu thụ hoặc trừ kho lặp lại trên bữa đã `COMPLETED` (chống lặp).
+  - **TC-11:** Phân bổ trừ kho theo đúng chuẩn FEFO (ưu tiên trừ lô có hạn dùng gần nhất trước).
 
 ---
 
