@@ -17,8 +17,8 @@
 | 6 | Sửa/hủy kế hoạch (MOD-04-05) | `lib/features/meal_plan/domain/meal_service.dart`<br>`lib/features/meal_plan/presentation/screens/meal_detail_screen.dart` | ✅ Xong (chờ chạy SDK verify) | Sửa khẩu phần/lượng, bỏ món, dời ngày/khung bữa, hủy bữa chưa hoàn thành |
 | 7 | `ReminderService` (MOD-04-06) | `lib/features/meal_plan/domain/reminder_service.dart`<br>`lib/features/meal_plan/presentation/widgets/reminder_bottom_sheet.dart` | ✅ Xong (chờ chạy SDK verify) | Đặt/cập nhật/hủy nhắc cục bộ + ghi `thong_bao` (`MEAL_REMINDER`), fallback in-app |
 | 8 | `ConfirmConsumptionScreen` (MOD-04-07) | `lib/features/meal_plan/data/models/consumption_request.dart`<br>`lib/features/meal_plan/presentation/screens/confirm_consumption_screen.dart` | ✅ Xong (chờ chạy SDK verify) | Tính lượng dự kiến theo khẩu phần, quy đổi về đơn vị cơ sở, cho điều chỉnh lượng thực dùng (chưa trừ kho) |
-| 9 | `StockDeductionService` + Dialog (MOD-04-08) | — | ⏳ Tiếp theo | Transaction trừ kho FEFO + chống lặp |
-| 10 | Integration tests (`TC-08`..`TC-11`) | — | ⏳ Chờ | Kiểm thử các ca trọng tâm |
+| 9 | `StockDeductionService` + Dialog (MOD-04-08) | `lib/features/meal_plan/domain/stock_deduction_service.dart`<br>`lib/features/meal_plan/presentation/widgets/complete_meal_dialog.dart` | ✅ Xong (chờ chạy SDK verify) | Transaction trừ kho FEFO nguyên tử (all-or-nothing), chống lặp (idempotent), ghi `bien_dong_kho` (`CONSUME`) |
+| 10 | Integration tests (`TC-08`..`TC-11`) | — | ⏳ Tiếp theo | Kiểm thử các ca trọng tâm |
 
 ---
 
@@ -64,6 +64,15 @@
 ### Bước 8 — Xác nhận lượng dùng thực tế (`consumption_request.dart`, `confirm_consumption_screen.dart`)
 - Tạo `ConsumptionItem`, `ConsumptionRequest` và `ConsumptionEstimator` tính lượng dự kiến từ công thức (theo khẩu phần) + thực phẩm ăn liền, chuẩn hóa toàn bộ về đơn vị tồn kho cơ sở (`ma_don_vi_co_so`).
 - `ConfirmConsumptionScreen` cho phép chỉnh lượng thực tế (`>= 0`) hoặc bỏ chọn nguyên liệu không dùng, bắt buộc có ít nhất 1 nguyên liệu `> 0`, và **chưa ghi vào tồn kho**.
+
+### Bước 9 — Hoàn thành bữa ăn & trừ kho FEFO nguyên tử (`stock_deduction_service.dart`, `complete_meal_dialog.dart`)
+- `StockDeductionService`:
+  - Thực hiện Firestore Transaction nguyên tử: kiểm tra trạng thái bữa (chống trừ 2 lần nếu 2 thiết bị cùng xác nhận bữa ăn — TC-10).
+  - Thuật toán FEFO (TC-11): lọc các lô còn hạn dùng (`han_su_dung >= today`), sắp xếp hạn gần nhất lên trước để trừ.
+  - All-or-nothing (TC-09): nếu thiếu bất kỳ 1 nguyên liệu nào, abort toàn bộ transaction và không trừ bất cứ lô nào.
+  - Ghi lịch sử biến động kho `bien_dong_kho` với `loai_bien_dong = 'CONSUME'`, `so_luong_nhap = 0`, `so_luong_xuat = lượng trừ` (khớp chuẩn `schema.sql` mới trên branch `mod4`).
+  - Đánh dấu bữa ăn `COMPLETED` kèm `hoan_thanh_luc = now`.
+- `CompleteMealDialog`: Hiển thị chi tiết phân bổ các lô FEFO trước khi trừ, vô hiệu hóa nút bấm và cảnh báo đỏ nếu thiếu tồn kho.
 
 ---
 

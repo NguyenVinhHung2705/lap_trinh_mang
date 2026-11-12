@@ -5,7 +5,10 @@ import '../../data/meal_repository.dart';
 import '../../data/models/meal.dart';
 import '../../data/models/meal_item.dart';
 import '../providers/meal_detail_provider.dart';
+import '../widgets/complete_meal_dialog.dart';
+import '../widgets/reminder_bottom_sheet.dart';
 import 'add_dish_screen.dart';
+import 'confirm_consumption_screen.dart';
 
 /// Detail screen for a selected `(date, slot)` meal (`MOD-04-02` & `MOD-04-05`).
 class MealDetailScreen extends ConsumerStatefulWidget {
@@ -146,6 +149,41 @@ class _MealDetailScreenState extends ConsumerState<MealDetailScreen> {
         _selectedSlot = moved.slot;
       });
     }, successMessage: 'Đã dời lịch bữa ăn.');
+  }
+
+  Future<void> _handleConfigureReminder(Meal meal) async {
+    if (widget.onConfigureReminder != null) {
+      widget.onConfigureReminder!(meal);
+      return;
+    }
+    final updated = await ReminderBottomSheet.show(context, meal: meal);
+    if (updated == true && mounted) {
+      await ref.read(mealDetailProvider(_slotKey).notifier).refresh();
+    }
+  }
+
+  Future<void> _handleCompleteMeal(Meal meal, List<MealItem> items) async {
+    if (widget.onCompleteMeal != null) {
+      widget.onCompleteMeal!(meal, items);
+      return;
+    }
+    final consumptionRequest =
+        await Navigator.of(context).push<ConsumptionRequest>(
+      MaterialPageRoute(
+        builder: (_) =>
+            ConfirmConsumptionScreen(meal: meal, mealItems: items),
+      ),
+    );
+    if (consumptionRequest == null || !mounted) return;
+
+    final completedMeal = await CompleteMealDialog.show(
+      context,
+      request: consumptionRequest,
+    );
+    if (completedMeal != null && mounted) {
+      _showSnack('Bữa ăn đã hoàn thành và trừ tồn kho thành công!');
+      await ref.read(mealDetailProvider(_slotKey).notifier).refresh();
+    }
   }
 
   Future<void> _handleCancelMeal(Meal meal) async {
@@ -398,9 +436,7 @@ class _MealDetailScreenState extends ConsumerState<MealDetailScreen> {
                         tooltip: 'Dời ngày/khung bữa',
                       ),
                       IconButton(
-                        onPressed: widget.onConfigureReminder == null
-                            ? null
-                            : () => widget.onConfigureReminder!(meal),
+                        onPressed: () => _handleConfigureReminder(meal),
                         icon: const Icon(Icons.notifications_outlined),
                         color: _textPrimary,
                         tooltip: 'Nhắc chuẩn bị bữa ăn',
@@ -464,7 +500,7 @@ class _MealDetailScreenState extends ConsumerState<MealDetailScreen> {
               data: (meal) => _MealDetailBody(
                 meal: meal,
                 itemTitleBuilder: widget.itemTitleBuilder,
-                onCompleteMeal: widget.onCompleteMeal,
+                onCompleteMeal: _handleCompleteMeal,
                 onEditItem: _handleEditItem,
                 onDeleteItem: _handleDeleteItem,
                 onCancelMeal: _handleCancelMeal,
