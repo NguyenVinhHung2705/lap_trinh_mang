@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/meal_repository.dart';
 import '../../data/models/meal.dart';
 import '../../data/models/meal_item.dart';
 import '../providers/meal_detail_provider.dart';
+import 'add_dish_screen.dart';
 
-/// Detail screen for a selected `(date, slot)` meal (`MOD-04-02`).
+/// Detail screen for a selected `(date, slot)` meal (`MOD-04-02` & `MOD-04-05`).
 class MealDetailScreen extends ConsumerStatefulWidget {
   const MealDetailScreen({
     super.key,
@@ -18,6 +20,8 @@ class MealDetailScreen extends ConsumerStatefulWidget {
     this.onEditItem,
     this.onDeleteItem,
     this.onCancelMeal,
+    this.onCancelReminders,
+    this.onReminderRescheduled,
   });
 
   final DateTime initialDate;
@@ -29,6 +33,8 @@ class MealDetailScreen extends ConsumerStatefulWidget {
   final void Function(Meal meal, MealItem item)? onEditItem;
   final void Function(Meal meal, MealItem item)? onDeleteItem;
   final ValueChanged<Meal>? onCancelMeal;
+  final Future<void> Function(String mealId)? onCancelReminders;
+  final Future<void> Function(Meal updatedMeal)? onReminderRescheduled;
 
   @override
   ConsumerState<MealDetailScreen> createState() => _MealDetailScreenState();
@@ -72,6 +78,295 @@ class _MealDetailScreenState extends ConsumerState<MealDetailScreen> {
     });
   }
 
+  Future<void> _openAddDish(Meal meal) async {
+    if (widget.onAddDish != null) {
+      widget.onAddDish!(meal);
+      return;
+    }
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => AddDishScreen(meal: meal)),
+    );
+  }
+
+  Future<void> _handleEditItem(Meal meal, MealItem item) async {
+    if (widget.onEditItem != null) {
+      widget.onEditItem!(meal, item);
+      return;
+    }
+    final newQuantity = await _promptQuantityEdit(item);
+    if (newQuantity == null || !mounted) return;
+
+    await _runAction(() async {
+      await ref.read(mealServiceProvider).updateItemQuantity(
+            userId: meal.userId,
+            mealId: meal.id,
+            itemId: item.id,
+            quantity: newQuantity,
+          );
+    }, successMessage: 'Đã cập nhật định lượng món.');
+  }
+
+  Future<void> _handleDeleteItem(Meal meal, MealItem item) async {
+    if (widget.onDeleteItem != null) {
+      widget.onDeleteItem!(meal, item);
+      return;
+    }
+    final confirmed = await _confirmDialog(
+      title: 'Bỏ món khỏi bữa ăn?',
+      message: 'Thao tác này chỉ xóa khỏi kế hoạch, không làm thay đổi tồn kho.',
+      confirmLabel: 'Bỏ món',
+      isDestructive: true,
+    );
+    if (!confirmed || !mounted) return;
+
+    await _runAction(() async {
+      await ref.read(mealServiceProvider).removeItem(
+            userId: meal.userId,
+            mealId: meal.id,
+            itemId: item.id,
+          );
+    }, successMessage: 'Đã bỏ món khỏi kế hoạch.');
+  }
+
+  Future<void> _handleRescheduleMeal(Meal meal) async {
+    final target = await _promptReschedule(meal);
+    if (target == null || !mounted) return;
+
+    await _runAction(() async {
+      final moved = await ref.read(mealServiceProvider).rescheduleMeal(
+            userId: meal.userId,
+            mealId: meal.id,
+            newDate: target.date,
+            newSlot: target.slot,
+            onReminderRescheduled: widget.onReminderRescheduled,
+          );
+      if (!mounted) return;
+      setState(() {
+        _selectedDate = moved.mealDate;
+        _selectedSlot = moved.slot;
+      });
+    }, successMessage: 'Đã dời lịch bữa ăn.');
+  }
+
+  Future<void> _handleCancelMeal(Meal meal) async {
+    if (widget.onCancelMeal != null) {
+      widget.onCancelMeal!(meal);
+      return;
+    }
+    final confirmed = await _confirmDialog(
+      title: 'Hủy kế hoạch bữa ăn?',
+      message:
+          'Kế hoạch bữa ${meal.slot.labelVi} sẽ bị hủy và lịch nhắc liên quan sẽ được gỡ. Tồn kho không bị ảnh hưởng.',
+      confirmLabel: 'Hủy kế hoạch',
+      isDestructive: true,
+    );
+    if (!confirmed || !mounted) return;
+
+    await _runAction(() async {
+      await ref.read(mealServiceProvider).cancelMeal(
+            userId: meal.userId,
+            mealId: meal.id,
+            onCancelReminders: widget.onCancelReminders,
+          );
+      if (!mounted) return;
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop(true);
+      } else {
+        await ref.read(mealDetailProvider(_slotKey).notifier).refresh();
+      }
+    }, successMessage: 'Đã hủy kế hoạch bữa ăn.');
+  }
+
+  Future<void> _runAction(
+    Future<void> Function() action, {
+    required String successMessage,
+  }) async {
+    try {
+      await action();
+      if (!mounted) return;
+      _showSnack(successMessage);
+    } on MealPlanException catch (e) {
+      if (!mounted) return;
+      _showSnack(e.message, isError: true);
+    } catch (e) {
+      if (!mounted) return;
+      _showSnack('Thao tác thất bại: $e', isError: true);
+    }
+  }
+
+  void _showSnack(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? const Color(0xFFEF4444) : _primary,
+      ),
+    );
+  }
+
+  Future<double?> _promptQuantityEdit(MealItem item) async {
+    final controller = TextEditingController(
+      text: item.quantity == item.quantity.roundToDouble()
+          ? item.quantity.toInt().toString()
+          : item.quantity.toString(),
+    );
+    String? error;
+
+    return showDialog<double>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(item.isRecipe ? 'Sửa số khẩu phần' : 'Sửa số lượng'),
+          content: TextField(
+            controller: controller,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: item.isRecipe ? 'Khẩu phần' : 'Số lượng (${item.unitId})',
+              errorText: error,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Hủy'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final parsed = double.tryParse(controller.text.trim());
+                if (parsed == null || parsed <= 0) {
+                  setDialogState(() => error = 'Vui lòng nhập số > 0');
+                  return;
+                }
+                Navigator.of(ctx).pop(parsed);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _primary,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Lưu'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<({DateTime date, MealSlot slot})?> _promptReschedule(Meal meal) async {
+    DateTime pickedDate = meal.mealDate;
+    MealSlot pickedSlot = meal.slot;
+
+    return showDialog<({DateTime date, MealSlot slot})>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final dateLabel =
+              '${pickedDate.day.toString().padLeft(2, '0')}/'
+              '${pickedDate.month.toString().padLeft(2, '0')}/${pickedDate.year}';
+          return AlertDialog(
+            title: const Text('Dời lịch bữa ăn'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.calendar_today_outlined, color: _primary),
+                  title: Text('Ngày: $dateLabel'),
+                  trailing: const Text(
+                    'Chọn',
+                    style: TextStyle(color: _primary, fontWeight: FontWeight.w700),
+                  ),
+                  onTap: () async {
+                    final date = await showDatePicker(
+                      context: ctx,
+                      initialDate: pickedDate,
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime(2035),
+                    );
+                    if (date != null) {
+                      setDialogState(
+                        () => pickedDate = Meal.normalizeLocalDate(date),
+                      );
+                    }
+                  },
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<MealSlot>(
+                  value: pickedSlot,
+                  decoration: InputDecoration(
+                    labelText: 'Khung bữa',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  items: MealSlot.values
+                      .map(
+                        (s) => DropdownMenuItem(
+                          value: s,
+                          child: Text('Bữa ${s.labelVi}'),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (val) {
+                    if (val != null) setDialogState(() => pickedSlot = val);
+                  },
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Hủy'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(ctx).pop(
+                  (date: pickedDate, slot: pickedSlot),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _primary,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Dời lịch'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<bool> _confirmDialog({
+    required String title,
+    required String message,
+    required String confirmLabel,
+    bool isDestructive = false,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Đóng'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor:
+                  isDestructive ? const Color(0xFFEF4444) : _primary,
+              foregroundColor: Colors.white,
+            ),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final mealAsync = ref.watch(mealDetailProvider(_slotKey));
@@ -93,13 +388,24 @@ class _MealDetailScreenState extends ConsumerState<MealDetailScreen> {
         actions: [
           mealAsync.maybeWhen(
             data: (meal) => meal.isPlanned
-                ? IconButton(
-                    onPressed: widget.onConfigureReminder == null
-                        ? null
-                        : () => widget.onConfigureReminder!(meal),
-                    icon: const Icon(Icons.notifications_outlined),
-                    color: _textPrimary,
-                    tooltip: 'Nhắc chuẩn bị bữa ăn',
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        onPressed: () => _handleRescheduleMeal(meal),
+                        icon: const Icon(Icons.edit_calendar_outlined),
+                        color: _textPrimary,
+                        tooltip: 'Dời ngày/khung bữa',
+                      ),
+                      IconButton(
+                        onPressed: widget.onConfigureReminder == null
+                            ? null
+                            : () => widget.onConfigureReminder!(meal),
+                        icon: const Icon(Icons.notifications_outlined),
+                        color: _textPrimary,
+                        tooltip: 'Nhắc chuẩn bị bữa ăn',
+                      ),
+                    ],
                   )
                 : const SizedBox.shrink(),
             orElse: () => const SizedBox.shrink(),
@@ -109,9 +415,7 @@ class _MealDetailScreenState extends ConsumerState<MealDetailScreen> {
       floatingActionButton: mealAsync.maybeWhen(
         data: (meal) => meal.isPlanned
             ? FloatingActionButton.extended(
-                onPressed: widget.onAddDish == null
-                    ? null
-                    : () => widget.onAddDish!(meal),
+                onPressed: () => _openAddDish(meal),
                 backgroundColor: _primary,
                 foregroundColor: Colors.white,
                 icon: const Icon(Icons.add_rounded),
@@ -161,9 +465,9 @@ class _MealDetailScreenState extends ConsumerState<MealDetailScreen> {
                 meal: meal,
                 itemTitleBuilder: widget.itemTitleBuilder,
                 onCompleteMeal: widget.onCompleteMeal,
-                onEditItem: widget.onEditItem,
-                onDeleteItem: widget.onDeleteItem,
-                onCancelMeal: widget.onCancelMeal,
+                onEditItem: _handleEditItem,
+                onDeleteItem: _handleDeleteItem,
+                onCancelMeal: _handleCancelMeal,
               ),
             ),
           ),
@@ -289,17 +593,17 @@ class _MealDetailBody extends ConsumerWidget {
     required this.meal,
     this.itemTitleBuilder,
     this.onCompleteMeal,
-    this.onEditItem,
-    this.onDeleteItem,
-    this.onCancelMeal,
+    required this.onEditItem,
+    required this.onDeleteItem,
+    required this.onCancelMeal,
   });
 
   final Meal meal;
   final String Function(MealItem item)? itemTitleBuilder;
   final void Function(Meal meal, List<MealItem> items)? onCompleteMeal;
-  final void Function(Meal meal, MealItem item)? onEditItem;
-  final void Function(Meal meal, MealItem item)? onDeleteItem;
-  final ValueChanged<Meal>? onCancelMeal;
+  final void Function(Meal meal, MealItem item) onEditItem;
+  final void Function(Meal meal, MealItem item) onDeleteItem;
+  final ValueChanged<Meal> onCancelMeal;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -369,12 +673,8 @@ class _MealDetailBody extends ConsumerWidget {
                     meal: meal,
                     item: item,
                     title: itemTitleBuilder?.call(item) ?? _defaultTitle(item),
-                    onEdit: onEditItem == null
-                        ? null
-                        : () => onEditItem!(meal, item),
-                    onDelete: onDeleteItem == null
-                        ? null
-                        : () => onDeleteItem!(meal, item),
+                    onEdit: () => onEditItem(meal, item),
+                    onDelete: () => onDeleteItem(meal, item),
                   ),
                 ),
               ),
@@ -400,29 +700,27 @@ class _MealDetailBody extends ConsumerWidget {
                   ),
                 ),
               ),
-              if (onCancelMeal != null) ...[
-                const SizedBox(height: 10),
-                SizedBox(
-                  height: 48,
-                  child: OutlinedButton(
-                    onPressed: () => onCancelMeal!(meal),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFEF4444),
-                      side: const BorderSide(color: Color(0xFFEF4444)),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 48,
+                child: OutlinedButton(
+                  onPressed: () => onCancelMeal(meal),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFEF4444),
+                    side: const BorderSide(color: Color(0xFFEF4444)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Text(
-                      'Hủy kế hoạch bữa ăn',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
+                  ),
+                  child: const Text(
+                    'Hủy kế hoạch bữa ăn',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
-              ],
+              ),
             ],
           ],
         );
@@ -512,15 +810,15 @@ class _MealItemCard extends StatelessWidget {
     required this.meal,
     required this.item,
     required this.title,
-    this.onEdit,
-    this.onDelete,
+    required this.onEdit,
+    required this.onDelete,
   });
 
   final Meal meal;
   final MealItem item;
   final String title;
-  final VoidCallback? onEdit;
-  final VoidCallback? onDelete;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -566,20 +864,18 @@ class _MealItemCard extends StatelessWidget {
             ),
           ),
           if (meal.isPlanned) ...[
-            if (onEdit != null)
-              IconButton(
-                onPressed: onEdit,
-                icon: const Icon(Icons.edit_outlined, size: 20),
-                color: _MealDetailScreenState._textSecondary,
-                tooltip: 'Sửa định lượng',
-              ),
-            if (onDelete != null)
-              IconButton(
-                onPressed: onDelete,
-                icon: const Icon(Icons.delete_outline_rounded, size: 20),
-                color: const Color(0xFFEF4444),
-                tooltip: 'Bỏ món',
-              ),
+            IconButton(
+              onPressed: onEdit,
+              icon: const Icon(Icons.edit_outlined, size: 20),
+              color: _MealDetailScreenState._textSecondary,
+              tooltip: 'Sửa định lượng',
+            ),
+            IconButton(
+              onPressed: onDelete,
+              icon: const Icon(Icons.delete_outline_rounded, size: 20),
+              color: const Color(0xFFEF4444),
+              tooltip: 'Bỏ món',
+            ),
           ],
         ],
       ),
@@ -592,4 +888,3 @@ class _MealItemCard extends StatelessWidget {
         : value.toStringAsFixed(2);
   }
 }
-
