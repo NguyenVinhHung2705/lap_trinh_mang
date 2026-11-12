@@ -596,7 +596,7 @@
       "x": 120,
       "y": 1980,
       "w": 1000,
-      "h": 324,
+      "h": 281,
       "fields": [
         {
           "name": "MaLo",
@@ -620,13 +620,6 @@
           "nullable": false
         },
         {
-          "name": "SoLuongTon",
-          "label": "so_luong_ton",
-          "key": "",
-          "type": "DECIMAL(12,3)",
-          "nullable": false
-        },
-        {
           "name": "NgayNhap",
           "label": "ngay_nhap",
           "key": "",
@@ -641,7 +634,7 @@
           "nullable": false
         }
       ],
-      "purpose": "Tồn kho theo lô và hạn sử dụng",
+      "purpose": "Thông tin lô thực phẩm theo vị trí và hạn sử dụng (tồn tính từ bien_dong_kho)",
       "groupTitle": "Kho thực phẩm",
       "fkOut": [
         {
@@ -671,10 +664,8 @@
           "label": "0..1 : N"
         }
       ],
-      "constraints": [
-        "CHECK (so_luong_ton >= 0)"
-      ],
-      "ddl": "CREATE TABLE lo_thuc_pham (\n  ma_lo INT NOT NULL AUTO_INCREMENT,\n  ma_thuc_pham INT NOT NULL,\n  ma_vi_tri INT NOT NULL,\n  so_luong_ton DECIMAL(12,3) NOT NULL,\n  ngay_nhap DATE NOT NULL,\n  han_su_dung DATE NOT NULL,\n  PRIMARY KEY (ma_lo),\n  CHECK (so_luong_ton >= 0)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
+      "constraints": [],
+      "ddl": "CREATE TABLE lo_thuc_pham (\n  ma_lo INT NOT NULL AUTO_INCREMENT,\n  ma_thuc_pham INT NOT NULL,\n  ma_vi_tri INT NOT NULL,\n  ngay_nhap DATE NOT NULL,\n  han_su_dung DATE NOT NULL,\n  PRIMARY KEY (ma_lo)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
     },
     {
       "name": "BIEN_DONG_KHO",
@@ -683,7 +674,7 @@
       "x": 680,
       "y": 2490,
       "w": 1000,
-      "h": 410,
+      "h": 453,
       "fields": [
         {
           "name": "MaBienDong",
@@ -721,8 +712,15 @@
           "nullable": false
         },
         {
-          "name": "SoLuongThayDoi",
-          "label": "so_luong_thay_doi",
+          "name": "SoLuongNhap",
+          "label": "so_luong_nhap",
+          "key": "",
+          "type": "DECIMAL(12,3)",
+          "nullable": false
+        },
+        {
+          "name": "SoLuongXuat",
+          "label": "so_luong_xuat",
           "key": "",
           "type": "DECIMAL(12,3)",
           "nullable": false
@@ -742,7 +740,7 @@
           "nullable": true
         }
       ],
-      "purpose": "Lịch sử nhập và tiêu thụ",
+      "purpose": "Sổ cái ghi nhận mọi biến động nhập (INPUT) và xuất (OUTPUT) kho theo lô",
       "groupTitle": "Kho thực phẩm",
       "fkOut": [
         {
@@ -765,8 +763,13 @@
         }
       ],
       "fkIn": [],
-      "constraints": [],
-      "ddl": "CREATE TABLE bien_dong_kho (\n  ma_bien_dong INT NOT NULL AUTO_INCREMENT,\n  ma_lo INT NOT NULL,\n  ma_chi_tiet_mua INT NULL,\n  ma_mon_an INT NULL,\n  loai_bien_dong VARCHAR(30) NOT NULL,\n  so_luong_thay_doi DECIMAL(12,3) NOT NULL,\n  thoi_diem DATETIME NOT NULL,\n  ghi_chu VARCHAR(255) NULL,\n  PRIMARY KEY (ma_bien_dong)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
+      "constraints": [
+        "CHECK (loai_bien_dong IN ('IN', 'CONSUME', 'DISCARD', 'ADJUST'))",
+        "CHECK (so_luong_nhap >= 0)",
+        "CHECK (so_luong_xuat >= 0)",
+        "CHECK ((so_luong_nhap > 0 AND so_luong_xuat = 0) OR (so_luong_nhap = 0 AND so_luong_xuat > 0))"
+      ],
+      "ddl": "CREATE TABLE bien_dong_kho (\n  ma_bien_dong INT NOT NULL AUTO_INCREMENT,\n  ma_lo INT NOT NULL,\n  ma_chi_tiet_mua INT NULL,\n  ma_mon_an INT NULL,\n  loai_bien_dong VARCHAR(30) NOT NULL,\n  so_luong_nhap DECIMAL(12,3) NOT NULL DEFAULT 0.000,\n  so_luong_xuat DECIMAL(12,3) NOT NULL DEFAULT 0.000,\n  thoi_diem DATETIME NOT NULL,\n  ghi_chu VARCHAR(255) NULL,\n  PRIMARY KEY (ma_bien_dong),\n  CONSTRAINT chk_bien_dong_loai CHECK (loai_bien_dong IN ('IN', 'CONSUME', 'DISCARD', 'ADJUST')),\n  CONSTRAINT chk_bien_dong_nhap_khong_am CHECK (so_luong_nhap >= 0),\n  CONSTRAINT chk_bien_dong_xuat_khong_am CHECK (so_luong_xuat >= 0),\n  CONSTRAINT chk_bien_dong_chi_mot_chieu CHECK ((so_luong_nhap > 0 AND so_luong_xuat = 0) OR (so_luong_nhap = 0 AND so_luong_xuat > 0))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
     },
     {
       "name": "CAU_HINH_THUC_PHAM",
@@ -1711,11 +1714,12 @@
           "Mở kho và lọc thực phẩm",
           [
             "LO_THUC_PHAM",
+            "BIEN_DONG_KHO",
             "THUC_PHAM",
             "VI_TRI_LUU_TRU"
           ],
           [],
-          "Chỉ hiển thị kho thuộc tài khoản hiện tại."
+          "Chỉ hiển thị kho thuộc tài khoản hiện tại; tồn mỗi lô tính từ bien_dong_kho."
         ],
         [
           "Nhập hoặc sửa thông tin thực phẩm",
@@ -1738,12 +1742,13 @@
             "LO_THUC_PHAM",
             "BIEN_DONG_KHO"
           ],
-          "Không gộp lô khác hạn sử dụng; ghi nhận lịch sử thay đổi."
+          "Không gộp lô khác hạn sử dụng; ghi nhận dòng IN vào bien_dong_kho."
         ],
         [
           "Kiểm tra hạn và ngưỡng sắp hết",
           [
             "LO_THUC_PHAM",
+            "BIEN_DONG_KHO",
             "CAU_HINH_THUC_PHAM"
           ],
           [

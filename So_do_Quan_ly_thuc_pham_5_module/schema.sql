@@ -77,11 +77,9 @@ CREATE TABLE lo_thuc_pham (
   ma_lo INT NOT NULL AUTO_INCREMENT,
   ma_thuc_pham INT NOT NULL,
   ma_vi_tri INT NOT NULL,
-  so_luong_ton DECIMAL(12,3) NOT NULL,
   ngay_nhap DATE NOT NULL,
   han_su_dung DATE NOT NULL,
-  PRIMARY KEY (ma_lo),
-  CHECK (so_luong_ton >= 0)
+  PRIMARY KEY (ma_lo)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE bien_dong_kho (
@@ -90,10 +88,15 @@ CREATE TABLE bien_dong_kho (
   ma_chi_tiet_mua INT NULL,
   ma_mon_an INT NULL,
   loai_bien_dong VARCHAR(30) NOT NULL,
-  so_luong_thay_doi DECIMAL(12,3) NOT NULL,
+  so_luong_nhap DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  so_luong_xuat DECIMAL(12,3) NOT NULL DEFAULT 0.000,
   thoi_diem DATETIME NOT NULL,
   ghi_chu VARCHAR(255) NULL,
-  PRIMARY KEY (ma_bien_dong)
+  PRIMARY KEY (ma_bien_dong),
+  CONSTRAINT chk_bien_dong_loai CHECK (loai_bien_dong IN ('IN', 'CONSUME', 'DISCARD', 'ADJUST')),
+  CONSTRAINT chk_bien_dong_nhap_khong_am CHECK (so_luong_nhap >= 0),
+  CONSTRAINT chk_bien_dong_xuat_khong_am CHECK (so_luong_xuat >= 0),
+  CONSTRAINT chk_bien_dong_chi_mot_chieu CHECK ((so_luong_nhap > 0 AND so_luong_xuat = 0) OR (so_luong_nhap = 0 AND so_luong_xuat > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE cau_hinh_thuc_pham (
@@ -255,6 +258,8 @@ ALTER TABLE thong_bao ADD CONSTRAINT fk_thong_bao_ma_lo FOREIGN KEY (ma_lo) REFE
 
 ALTER TABLE thong_bao ADD CONSTRAINT fk_thong_bao_ma_bua_an FOREIGN KEY (ma_bua_an) REFERENCES bua_an (ma_bua_an) ON DELETE RESTRICT ON UPDATE RESTRICT;
 
+-- Tồn kho mỗi lô = SUM(so_luong_nhap) - SUM(so_luong_xuat) trong bien_dong_kho (>= 0).
+-- Khi xuất/tiêu thụ/điều chỉnh giảm phải khóa bản ghi lô (SELECT ... FOR UPDATE) trong giao dịch nguyên tử, kiểm tra tổng tồn khả dụng không âm và giữ bất biến lịch sử đã xác nhận.
 -- Liên tài khoản, số lượng/đơn vị tương thích và chống thao tác lặp phải kiểm tra trong nghiệp vụ/giao dịch.
 
 -- Firebase Authentication đảm nhiệm mật khẩu và token nếu dùng backend Firebase; không lưu chúng trong Firestore.
