@@ -317,6 +317,69 @@ class MealService {
     return _mealRepository.addMealItem(userId: userId, item: item);
   }
 
+  /// Updates quantity/servings of an item in a `PLANNED` meal (`MOD-04-05`).
+  Future<void> updateItemQuantity({
+    required String userId,
+    required String mealId,
+    required String itemId,
+    required double quantity,
+  }) async {
+    _requirePositive(quantity, 'Số lượng hoặc khẩu phần phải lớn hơn 0.');
+    await _mealRepository.updateMealItemQuantity(
+      userId: userId,
+      mealId: mealId,
+      itemId: itemId,
+      quantity: quantity,
+    );
+  }
+
+  /// Removes an item from a `PLANNED` meal (`MOD-04-05`). Does not affect stock.
+  Future<void> removeItem({
+    required String userId,
+    required String mealId,
+    required String itemId,
+  }) async {
+    await _mealRepository.removeMealItem(
+      userId: userId,
+      mealId: mealId,
+      itemId: itemId,
+    );
+  }
+
+  /// Moves a `PLANNED` meal to a new date and slot (`MOD-04-05`).
+  ///
+  /// Invokes [onReminderRescheduled] if the moved meal has an active reminder.
+  Future<Meal> rescheduleMeal({
+    required String userId,
+    required String mealId,
+    required DateTime newDate,
+    required MealSlot newSlot,
+    Future<void> Function(Meal updatedMeal)? onReminderRescheduled,
+  }) async {
+    final movedMeal = await _mealRepository.rescheduleMeal(
+      userId: userId,
+      mealId: mealId,
+      newDate: newDate,
+      newSlot: newSlot,
+    );
+    if (movedMeal.reminderAt != null && onReminderRescheduled != null) {
+      await onReminderRescheduled(movedMeal);
+    }
+    return movedMeal;
+  }
+
+  /// Cancels a `PLANNED` meal (`MOD-04-05`). Never modifies `COMPLETED` meals or stock.
+  Future<void> cancelMeal({
+    required String userId,
+    required String mealId,
+    Future<void> Function(String mealId)? onCancelReminders,
+  }) async {
+    await _mealRepository.cancelMeal(userId: userId, mealId: mealId);
+    if (onCancelReminders != null) {
+      await onCancelReminders(mealId);
+    }
+  }
+
   Future<Meal> _requirePlannedMeal(String userId, String mealId) async {
     final meal = await _mealRepository.getMealById(userId: userId, mealId: mealId);
     if (meal == null) {
