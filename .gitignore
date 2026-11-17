@@ -47,7 +47,6 @@ app.*.map.json
 # Widget Preview related
 .widget_preview/
 
-
 # Private agent notes
 agent-brief-mod04.md
 ke-hoach-ho-nguyen-khoi.md
