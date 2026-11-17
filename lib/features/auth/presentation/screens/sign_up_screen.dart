@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/auth_providers.dart';
 import '../widgets/auth_scaffold.dart';
+import 'auth_gate_screen.dart';
 import 'verify_email_screen.dart';
 
 class SignUpScreen extends ConsumerStatefulWidget {
@@ -40,8 +41,9 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
             displayName: _nameController.text,
           );
       if (mounted) {
+        showAuthMessage(context, 'Đăng ký tài khoản thành công!');
         Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute<void>(builder: (_) => const VerifyEmailScreen()),
+          MaterialPageRoute<void>(builder: (_) => const AuthGateScreen()),
           (_) => false,
         );
       }

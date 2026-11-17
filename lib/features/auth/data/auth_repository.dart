@@ -27,19 +27,36 @@ class AuthRepository {
     FirebaseFirestore? firestore,
     FirebaseStorage? storage,
     ImagePicker? imagePicker,
-  })  : _auth = auth ?? FirebaseAuth.instance,
-        _firestore = firestore ?? FirebaseFirestore.instance,
-        _storage = storage ?? FirebaseStorage.instance,
+  })  : _customAuth = auth,
+        _customFirestore = firestore,
+        _customStorage = storage,
         _imagePicker = imagePicker ?? ImagePicker();
 
-  final FirebaseAuth _auth;
-  final FirebaseFirestore _firestore;
-  final FirebaseStorage _storage;
+  final FirebaseAuth? _customAuth;
+  final FirebaseFirestore? _customFirestore;
+  final FirebaseStorage? _customStorage;
   final ImagePicker _imagePicker;
 
-  User? get currentUser => _auth.currentUser;
+  FirebaseAuth get _auth => _customAuth ?? FirebaseAuth.instance;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
+  FirebaseStorage get _storage => _customStorage ?? FirebaseStorage.instance;
 
-  Stream<User?> authStateChanges() => _auth.authStateChanges();
+  User? get currentUser {
+    try {
+      return _auth.currentUser;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Stream<User?> authStateChanges() {
+    try {
+      return _auth.authStateChanges();
+    } catch (_) {
+      return const Stream.empty();
+    }
+  }
 
   Stream<UserProfile?> watchProfile(String uid) {
     return _profileDocument(uid).snapshots().map((snapshot) {

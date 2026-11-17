@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Hàm trợ giúp kiểm tra đăng nhập
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Hàm trợ giúp kiểm tra chính chủ tài khoản
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // 1. Phân hệ Tài khoản, Kho, Mua sắm, Kế hoạch, Thông báo (User-Scoped)
+    match /users/{userId} {
+      // Hồ sơ cá nhân: Chỉ chính chủ đọc và sửa hồ sơ của mình
+      allow read, write: if isOwner(userId);
+
+      // MOD-01: Kho thực phẩm, Lô thực phẩm, Biến động kho, Vị trí lưu trữ
+      match /thuc_pham/{foodId} {
+        allow read, write: if isOwner(userId);
+      }
+      match /lo_thuc_pham/{batchId} {
+        allow read, write: if isOwner(userId);
+      }
+      match /bien_dong_kho/{movementId} {
+        allow read, write: if isOwner(userId);
+      }
+      match /vi_tri_luu_tru/{locId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // MOD-02: Danh sách mua sắm & Chi tiết mua
+      match /danh_sach_mua/{listId} {
+        allow read, write: if isOwner(userId);
+        
+        match /chi_tiet_mua/{itemId} {
+          allow read, write: if isOwner(userId);
+        }
+      }
+
+      // MOD-04: Kế hoạch bữa ăn & Món ăn trong bữa
+      match /meals/{mealId} {
+        allow read, write: if isOwner(userId);
+        
+        match /items/{itemId} {
+          allow read, write: if isOwner(userId);
+        }
+      }
+
+      // MOD-03: Công thức đã lưu (Bookmark)
+      match /cong_thuc_da_luu/{recipeId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Thông báo hệ thống & nhắc nhở
+      match /notifications/{notificationId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // 2. MOD-03: Thư viện Công thức nấu ăn dùng chung (Global Recipes)
+    match /cong_thuc/{recipeId} {
+      // Mọi người dùng đã đăng nhập đều có thể đọc công thức công khai
+      allow read: if isAuthenticated();
+      // Người tạo hoặc user đã đăng nhập được tạo / sửa công thức
+      allow create, update: if isAuthenticated();
+      allow delete: if isAuthenticated() && (resource.data.ma_tac_gia == request.auth.uid);
+
+      match /nguyen_lieu/{ingredientId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated();
+      }
+    }
+  }
+}

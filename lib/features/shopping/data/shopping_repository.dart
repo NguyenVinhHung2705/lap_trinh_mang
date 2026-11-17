@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'models/shopping_item.dart';
 import 'models/shopping_list.dart';
+import 'shopping_mock_data.dart';
 
 /// Base exception for shopping module operations.
 class ShoppingException implements Exception {
@@ -41,9 +42,19 @@ class ShoppingPermissionException extends ShoppingException {
 /// - `/users/{uid}/danh_sach_mua/{listId}/chi_tiet_mua/{itemId}`
 class ShoppingRepository {
   ShoppingRepository({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+      : _customFirestore = firestore;
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
+
+  bool _isMockUser(String userId) =>
+      userId.isEmpty || userId.startsWith('mock_') || userId == 'test_user_id';
+
+  final List<ShoppingList> _memoryLists =
+      List<ShoppingList>.from(ShoppingMockData.initialLists);
+  final Map<String, List<ShoppingItem>> _memoryItems =
+      Map<String, List<ShoppingItem>>.from(ShoppingMockData.initialItems);
 
   CollectionReference<Map<String, dynamic>> _listsRef(String userId) {
     return _firestore
@@ -81,6 +92,21 @@ class ShoppingRepository {
       throw const ShoppingException('Tên danh sách mua sắm không được để trống.');
     }
 
+    if (_isMockUser(userId)) {
+      final id = 'shop_list_${DateTime.now().millisecondsSinceEpoch}';
+      final newList = ShoppingList(
+        id: id,
+        userId: userId,
+        name: trimmedName,
+        createdAt: DateTime.now(),
+        status: ShoppingListStatus.open,
+        note: note?.trim(),
+      );
+      _memoryLists.insert(0, newList);
+      _memoryItems[id] = [];
+      return newList;
+    }
+
     final docRef = _listsRef(userId).doc();
     final now = DateTime.now();
 
@@ -105,6 +131,12 @@ class ShoppingRepository {
     required String userId,
     required String listId,
   }) async {
+    if (_isMockUser(userId)) {
+      return _memoryLists.cast<ShoppingList?>().firstWhere(
+            (l) => l?.id == listId,
+            orElse: () => null,
+          );
+    }
     final docSnap = await _listDoc(userId, listId).get();
     if (!docSnap.exists || docSnap.data() == null) return null;
     return ShoppingList.fromMap(_normalizeMap(docSnap.data()!), id: docSnap.id);
@@ -115,6 +147,13 @@ class ShoppingRepository {
     required String userId,
     ShoppingListStatus? status,
   }) async {
+    if (_isMockUser(userId)) {
+      var lists = List<ShoppingList>.from(_memoryLists);
+      if (status != null) {
+        lists = lists.where((l) => l.status == status).toList();
+      }
+      return lists;
+    }
     Query<Map<String, dynamic>> query =
         _listsRef(userId).orderBy('ngay_tao', descending: true);
 
@@ -133,6 +172,13 @@ class ShoppingRepository {
     required String userId,
     ShoppingListStatus? status,
   }) {
+    if (_isMockUser(userId)) {
+      var lists = List<ShoppingList>.from(_memoryLists);
+      if (status != null) {
+        lists = lists.where((l) => l.status == status).toList();
+      }
+      return Stream.value(lists);
+    }
     Query<Map<String, dynamic>> query =
         _listsRef(userId).orderBy('ngay_tao', descending: true);
 
@@ -160,6 +206,13 @@ class ShoppingRepository {
     if (list.userId != userId) {
       throw const ShoppingPermissionException();
     }
+    if (_isMockUser(userId)) {
+      final idx = _memoryLists.indexWhere((l) => l.id == list.id);
+      if (idx != -1) {
+        _memoryLists[idx] = list;
+      }
+      return list;
+    }
     final docRef = _listDoc(userId, list.id);
     final snap = await docRef.get();
     if (!snap.exists) {
@@ -178,6 +231,11 @@ class ShoppingRepository {
     required String userId,
     required String listId,
   }) async {
+    if (_isMockUser(userId)) {
+      _memoryLists.removeWhere((l) => l.id == listId);
+      _memoryItems.remove(listId);
+      return;
+    }
     final docRef = _listDoc(userId, listId);
     final snap = await docRef.get();
     if (!snap.exists || snap.data() == null) {
@@ -215,6 +273,16 @@ class ShoppingRepository {
     required String listId,
     required ShoppingItem item,
   }) async {
+    if (_isMockUser(userId)) {
+      final itemId = item.id.isNotEmpty
+          ? item.id
+          : 'shop_item_${DateTime.now().millisecondsSinceEpoch}';
+      final itemToSave = item.copyWith(id: itemId);
+      _memoryItems.putIfAbsent(listId, () => []).add(itemToSave);
+      await recalculateCounters(userId: userId, listId: listId);
+      return itemToSave;
+    }
+
     final listSnap = await _listDoc(userId, listId).get();
     if (!listSnap.exists || listSnap.data() == null) {
       throw const ShoppingNotFoundException('Danh sách mua sắm không tồn tại.');
@@ -248,6 +316,13 @@ class ShoppingRepository {
     required String listId,
     required String itemId,
   }) async {
+    if (_isMockUser(userId)) {
+      final items = _memoryItems[listId] ?? [];
+      return items.cast<ShoppingItem?>().firstWhere(
+            (i) => i?.id == itemId,
+            orElse: () => null,
+          );
+    }
     final snap = await _itemsRef(userId, listId).doc(itemId).get();
     if (!snap.exists || snap.data() == null) return null;
     return ShoppingItem.fromMap(_normalizeMap(snap.data()!), id: snap.id);
@@ -258,6 +333,9 @@ class ShoppingRepository {
     required String userId,
     required String listId,
   }) async {
+    if (_isMockUser(userId)) {
+      return List<ShoppingItem>.from(_memoryItems[listId] ?? []);
+    }
     final snapshot = await _itemsRef(userId, listId)
         .orderBy('ngay_tao', descending: false)
         .get();
@@ -271,6 +349,9 @@ class ShoppingRepository {
     required String userId,
     required String listId,
   }) {
+    if (_isMockUser(userId)) {
+      return Stream.value(List<ShoppingItem>.from(_memoryItems[listId] ?? []));
+    }
     return _itemsRef(userId, listId)
         .orderBy('ngay_tao', descending: false)
         .snapshots()
@@ -294,6 +375,16 @@ class ShoppingRepository {
     required String listId,
     required ShoppingItem item,
   }) async {
+    if (_isMockUser(userId)) {
+      final items = _memoryItems[listId] ?? [];
+      final idx = items.indexWhere((i) => i.id == item.id);
+      if (idx != -1) {
+        items[idx] = item;
+      }
+      await recalculateCounters(userId: userId, listId: listId);
+      return item;
+    }
+
     final itemRef = _itemsRef(userId, listId).doc(item.id);
     final snap = await itemRef.get();
     if (!snap.exists || snap.data() == null) {
@@ -322,6 +413,12 @@ class ShoppingRepository {
     required String listId,
     required String itemId,
   }) async {
+    if (_isMockUser(userId)) {
+      _memoryItems[listId]?.removeWhere((i) => i.id == itemId);
+      await recalculateCounters(userId: userId, listId: listId);
+      return;
+    }
+
     final itemRef = _itemsRef(userId, listId).doc(itemId);
     final snap = await itemRef.get();
     if (!snap.exists || snap.data() == null) {
@@ -351,6 +448,25 @@ class ShoppingRepository {
     required bool isBought,
     double? actualQuantity,
   }) async {
+    if (_isMockUser(userId)) {
+      final items = _memoryItems[listId] ?? [];
+      final idx = items.indexWhere((i) => i.id == itemId);
+      if (idx != -1) {
+        final existing = items[idx];
+        final newActual = actualQuantity ??
+            (isBought && existing.actualQuantity == 0.0
+                ? existing.plannedQuantity
+                : existing.actualQuantity);
+        final updated = existing.copyWith(
+          isBought: isBought,
+          actualQuantity: isBought ? newActual : 0.0,
+        );
+        items[idx] = updated;
+        await recalculateCounters(userId: userId, listId: listId);
+        return updated;
+      }
+    }
+
     final itemRef = _itemsRef(userId, listId).doc(itemId);
     final snap = await itemRef.get();
     if (!snap.exists || snap.data() == null) {
@@ -395,6 +511,24 @@ class ShoppingRepository {
     String? locationId,
     String? locationName,
   }) async {
+    if (_isMockUser(userId)) {
+      final items = _memoryItems[listId] ?? [];
+      final idx = items.indexWhere((i) => i.id == itemId);
+      if (idx != -1) {
+        final existing = items[idx];
+        final updated = existing.copyWith(
+          actualQuantity: actualQuantity,
+          isBought: actualQuantity > 0,
+          expiryDate: expiryDate,
+          locationId: locationId,
+          locationName: locationName,
+        );
+        items[idx] = updated;
+        await recalculateCounters(userId: userId, listId: listId);
+        return updated;
+      }
+    }
+
     final itemRef = _itemsRef(userId, listId).doc(itemId);
     final snap = await itemRef.get();
     if (!snap.exists || snap.data() == null) {
@@ -428,6 +562,26 @@ class ShoppingRepository {
     required String userId,
     required String listId,
   }) async {
+    if (_isMockUser(userId)) {
+      final items = _memoryItems[listId] ?? [];
+      final total = items.length;
+      var bought = 0;
+      var synced = 0;
+      for (final it in items) {
+        if (it.isBought || it.actualQuantity > 0) bought++;
+        if (it.isSynced) synced++;
+      }
+      final idx = _memoryLists.indexWhere((l) => l.id == listId);
+      if (idx != -1) {
+        _memoryLists[idx] = _memoryLists[idx].copyWith(
+          totalItems: total,
+          boughtItems: bought,
+          syncedItems: synced,
+        );
+      }
+      return;
+    }
+
     final listDocRef = _listDoc(userId, listId);
     final snap = await _itemsRef(userId, listId).get();
 

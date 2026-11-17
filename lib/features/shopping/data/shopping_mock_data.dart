@@ -1,0 +1,131 @@
+import 'models/shopping_list.dart';
+import 'models/shopping_item.dart';
+
+/// Mock data cho phân hệ MOD-02: Quản lý Mua sắm (Nguyễn Vĩnh Hưng)
+/// Phục vụ chế độ Local / Khách trải nghiệm mượt mà không cần Firestore.
+class ShoppingMockData {
+  const ShoppingMockData._();
+
+  static final List<ShoppingList> initialLists = [
+    ShoppingList(
+      id: 'shop_list_1',
+      userId: 'mock_user_nguyen_van_dinh',
+      name: 'Đi siêu thị Co.opmart cuối tuần',
+      note: 'Mua thực phẩm tươi dùng cho tuần sau',
+      status: ShoppingListStatus.open,
+      totalItems: 4,
+      boughtItems: 1,
+      syncedItems: 0,
+    ),
+    ShoppingList(
+      id: 'shop_list_2',
+      userId: 'mock_user_nguyen_van_dinh',
+      name: 'Mua đồ khô & Gia vị',
+      note: 'Bổ sung gia vị và đồ nấu phở',
+      status: ShoppingListStatus.open,
+      totalItems: 3,
+      boughtItems: 0,
+      syncedItems: 0,
+    ),
+  ];
+
+  static final Map<String, List<ShoppingItem>> initialItems = {
+    'shop_list_1': [
+      ShoppingItem(
+        id: 'item_1_1',
+        listId: 'shop_list_1',
+        foodId: 'f2',
+        foodName: 'Thịt bò thăn',
+        unitId: 'g',
+        unitName: 'g',
+        categoryName: 'Thịt cá',
+        plannedQuantity: 500,
+        actualQuantity: 500,
+        isBought: true,
+        isSynced: false,
+        locationName: 'Ngăn đông tủ lạnh',
+        expiryDate: DateTime.now().add(const Duration(days: 7)),
+      ),
+      ShoppingItem(
+        id: 'item_1_2',
+        listId: 'shop_list_1',
+        foodId: 'f1',
+        foodName: 'Sữa chua nha đam',
+        unitId: 'hu',
+        unitName: 'hũ',
+        categoryName: 'Đồ uống',
+        plannedQuantity: 4,
+        actualQuantity: 0,
+        isBought: false,
+        isSynced: false,
+      ),
+      ShoppingItem(
+        id: 'item_1_3',
+        listId: 'shop_list_1',
+        foodId: 'f3',
+        foodName: 'Trứng gà ta',
+        unitId: 'qua',
+        unitName: 'quả',
+        categoryName: 'Trứng',
+        plannedQuantity: 10,
+        actualQuantity: 0,
+        isBought: false,
+        isSynced: false,
+      ),
+      ShoppingItem(
+        id: 'item_1_4',
+        listId: 'shop_list_1',
+        foodId: 'f15',
+        foodName: 'Cà chua Đà Lạt',
+        unitId: 'kg',
+        unitName: 'kg',
+        categoryName: 'Rau củ',
+        plannedQuantity: 1,
+        actualQuantity: 0,
+        isBought: false,
+        isSynced: false,
+      ),
+    ],
+    'shop_list_2': [
+      ShoppingItem(
+        id: 'item_2_1',
+        listId: 'shop_list_2',
+        foodId: 'f17',
+        foodName: 'Nước mắm truyền thống',
+        unitId: 'chai',
+        unitName: 'chai',
+        categoryName: 'Gia vị',
+        plannedQuantity: 1,
+        actualQuantity: 0,
+        isBought: false,
+        isSynced: false,
+      ),
+      ShoppingItem(
+        id: 'item_2_2',
+        listId: 'shop_list_2',
+        foodId: 'f10',
+        foodName: 'Bánh phở tươi',
+        unitId: 'kg',
+        unitName: 'kg',
+        categoryName: 'Đồ khô',
+        plannedQuantity: 1,
+        actualQuantity: 0,
+        isBought: false,
+        isSynced: false,
+      ),
+      ShoppingItem(
+        id: 'item_2_3',
+        listId: 'shop_list_2',
+        foodId: 'f21',
+        foodName: 'Hạt nêm thịt thăn',
+        unitId: 'goi',
+        unitName: 'gói',
+        categoryName: 'Gia vị',
+        plannedQuantity: 1,
+        actualQuantity: 0,
+        isBought: false,
+        isSynced: false,
+      ),
+    ],
+  };
+}

@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/pantry_providers.dart';
 import '../widgets/food_card.dart';
+import '../widgets/barcode_scanner_dialog.dart';
 import 'food_detail_screen.dart';
 import 'add_batch_screen.dart';
 import 'stock_movement_screen.dart';
+import 'storage_locations_screen.dart';
 import '../../shared/pantry_colors.dart';
 
 class PantryHomeScreen extends ConsumerStatefulWidget {
@@ -54,6 +56,15 @@ class _PantryHomeScreenState extends ConsumerState<PantryHomeScreen> {
         surfaceTintColor: Colors.transparent,
         actions: [
           IconButton(
+            icon: const Icon(Icons.kitchen_outlined, color: AppColors.primary),
+            tooltip: 'Vị trí lưu trữ',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const StorageLocationsScreen()),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.history, color: AppColors.primary),
             tooltip: 'Biến động kho',
             onPressed: () {
@@ -78,6 +89,22 @@ class _PantryHomeScreenState extends ConsumerState<PantryHomeScreen> {
               decoration: InputDecoration(
                 hintText: 'Tìm thực phẩm trong kho...',
                 prefixIcon: const Icon(Icons.search, color: AppColors.textSecondary),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.qr_code_scanner, color: AppColors.primary),
+                  tooltip: 'Quét mã vạch',
+                  onPressed: () {
+                    BarcodeScannerDialog.show(
+                      context,
+                      onScanned: (barcode, name) {
+                        _searchController.text = name;
+                        ref.read(pantrySearchQueryProvider.notifier).state = name;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Đã nhận diện mã: $barcode ($name)')),
+                        );
+                      },
+                    );
+                  },
+                ),
                 filled: true,
                 fillColor: AppColors.background,
                 contentPadding: const EdgeInsets.symmetric(vertical: 0),

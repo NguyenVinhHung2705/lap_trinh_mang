@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/meal_repository.dart';
+import '../../data/models/consumption_request.dart';
 import '../../data/models/meal.dart';
 import '../../data/models/meal_item.dart';
 import '../providers/meal_detail_provider.dart';

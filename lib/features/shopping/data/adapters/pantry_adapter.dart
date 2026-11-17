@@ -144,26 +144,47 @@ abstract interface class PantrySyncWriter {
 /// Default Firestore implementation connecting to MOD-01 collections.
 class FirestorePantryAdapter implements PantryReader, PantrySyncWriter {
   FirestorePantryAdapter({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+      : _customFirestore = firestore;
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
 
   @override
   Future<List<StorageLocationInfo>> getStorageLocations(String userId) async {
-    final snapshot = await _firestore
-        .collection('users')
-        .doc(userId)
-        .collection('vi_tri_luu_tru')
-        .get();
+    const defaultLocations = [
+      StorageLocationInfo(id: 'loc_1', name: 'Ngăn mát tủ lạnh', description: 'Nhiệt độ 2°C - 5°C'),
+      StorageLocationInfo(id: 'loc_2', name: 'Ngăn đông đá', description: 'Nhiệt độ dưới -18°C'),
+      StorageLocationInfo(id: 'loc_3', name: 'Tủ gia vị khô', description: 'Nơi thoáng mát'),
+      StorageLocationInfo(id: 'loc_4', name: 'Hộc rau quả', description: 'Độ ẩm cao'),
+    ];
 
-    return snapshot.docs.map((doc) {
-      final data = doc.data();
-      return StorageLocationInfo(
-        id: doc.id,
-        name: data['ten_vi_tri'] as String? ?? 'Vị trí mặc định',
-        description: data['mo_ta'] as String?,
-      );
-    }).toList();
+    if (userId.isEmpty || userId.startsWith('mock_') || userId.startsWith('guest_')) {
+      return defaultLocations;
+    }
+
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('vi_tri_luu_tru')
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        return defaultLocations;
+      }
+
+      return snapshot.docs.map((doc) {
+        final data = doc.data();
+        return StorageLocationInfo(
+          id: doc.id,
+          name: data['ten_vi_tri'] as String? ?? 'Vị trí mặc định',
+          description: data['mo_ta'] as String?,
+        );
+      }).toList();
+    } catch (_) {
+      return defaultLocations;
+    }
   }
 
   @override

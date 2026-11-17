@@ -121,6 +121,9 @@ class FakeRecipeRepository implements RecipeRepository {
   Stream<List<String>> watchSavedRecipeIds(String userId) {
     return Stream.value((_saved[userId] ?? {}).toList());
   }
+
+  @override
+  Future<void> seedInitialRecipesIfEmpty() async {}
 }
 
 void main() {

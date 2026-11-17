@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'meal_mock_data.dart';
 import 'models/meal.dart';
 import 'models/meal_item.dart';
 
@@ -41,9 +42,20 @@ class MealSlotConflictException extends MealPlanException {
 /// - `/users/{uid}/meals/{mealId}/items/{itemId}`
 class MealRepository {
   MealRepository({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+      : _customFirestore = firestore;
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
+
+  // In-memory fallback / mock store for offline & guest usage
+  static final List<Meal> _memoryMeals = List<Meal>.from(MealPlanMockData.initialMeals);
+  static final Map<String, List<MealItem>> _memoryMealItems =
+      MealPlanMockData.initialMealItems.map((k, v) => MapEntry(k, List<MealItem>.from(v)));
+
+  bool _isMockUser(String userId) {
+    return userId.isEmpty || userId.startsWith('mock_') || userId.startsWith('guest_');
+  }
 
   CollectionReference<Map<String, dynamic>> _mealsRef(String userId) {
     return _firestore.collection('users').doc(userId).collection('meals');
@@ -69,16 +81,27 @@ class MealRepository {
     required DateTime endDate,
     bool includeCancelled = false,
   }) async {
-    final startKey = Meal.formatLocalDate(startDate);
-    final endKey = Meal.formatLocalDate(endDate);
+    if (_isMockUser(userId)) {
+      return _filterMemoryMeals(startDate, endDate, includeCancelled);
+    }
 
-    final snapshot = await _mealsRef(userId)
-        .where('ngay_an', isGreaterThanOrEqualTo: startKey)
-        .where('ngay_an', isLessThanOrEqualTo: endKey)
-        .orderBy('ngay_an')
-        .get();
+    try {
+      final startKey = Meal.formatLocalDate(startDate);
+      final endKey = Meal.formatLocalDate(endDate);
 
-    return _mapMealSnapshot(snapshot, includeCancelled: includeCancelled);
+      final snapshot = await _mealsRef(userId)
+          .where('ngay_an', isGreaterThanOrEqualTo: startKey)
+          .where('ngay_an', isLessThanOrEqualTo: endKey)
+          .orderBy('ngay_an')
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        return _filterMemoryMeals(startDate, endDate, includeCancelled);
+      }
+      return _mapMealSnapshot(snapshot, includeCancelled: includeCancelled);
+    } catch (_) {
+      return _filterMemoryMeals(startDate, endDate, includeCancelled);
+    }
   }
 
   /// Streams meals for [userId] within [startDate]..[endDate] for reactive calendar updates.
@@ -88,6 +111,10 @@ class MealRepository {
     required DateTime endDate,
     bool includeCancelled = false,
   }) {
+    if (_isMockUser(userId)) {
+      return Stream.value(_filterMemoryMeals(startDate, endDate, includeCancelled));
+    }
+
     final startKey = Meal.formatLocalDate(startDate);
     final endKey = Meal.formatLocalDate(endDate);
 
@@ -97,9 +124,25 @@ class MealRepository {
         .orderBy('ngay_an')
         .snapshots()
         .map(
-          (snapshot) =>
-              _mapMealSnapshot(snapshot, includeCancelled: includeCancelled),
-        );
+          (snapshot) {
+            if (snapshot.docs.isEmpty) {
+              return _filterMemoryMeals(startDate, endDate, includeCancelled);
+            }
+            return _mapMealSnapshot(snapshot, includeCancelled: includeCancelled);
+          },
+        )
+        .handleError((_) => _filterMemoryMeals(startDate, endDate, includeCancelled));
+  }
+
+  List<Meal> _filterMemoryMeals(DateTime startDate, DateTime endDate, bool includeCancelled) {
+    final startKey = Meal.formatLocalDate(startDate);
+    final endKey = Meal.formatLocalDate(endDate);
+
+    return _memoryMeals.where((m) {
+      if (!includeCancelled && m.isCancelled) return false;
+      final mealKey = Meal.formatLocalDate(m.mealDate);
+      return mealKey.compareTo(startKey) >= 0 && mealKey.compareTo(endKey) <= 0;
+    }).toList();
   }
 
   /// Fetches a single meal by [mealId], or returns `null` if not found.
@@ -107,15 +150,23 @@ class MealRepository {
     required String userId,
     required String mealId,
   }) async {
-    final doc = await _mealDoc(userId, mealId).get();
-    if (!doc.exists || doc.data() == null) return null;
-    return _mealFromDoc(doc);
+    final memoryMeal = _memoryMeals.cast<Meal?>().firstWhere(
+          (m) => m?.id == mealId,
+          orElse: () => null,
+        );
+
+    if (_isMockUser(userId)) return memoryMeal;
+
+    try {
+      final doc = await _mealDoc(userId, mealId).get();
+      if (!doc.exists || doc.data() == null) return memoryMeal;
+      return _mealFromDoc(doc);
+    } catch (_) {
+      return memoryMeal;
+    }
   }
 
   /// Finds the meal for `(userId, date, slot)` or creates a new `PLANNED` one (`MOD-04-02`).
-  ///
-  /// Uses a deterministic document ID inside a transaction to prevent duplicate slots.
-  /// If a previous plan for that slot was `CANCELLED`, it is reactivated as `PLANNED`.
   Future<Meal> getOrCreateMeal({
     required String userId,
     required DateTime date,
@@ -123,6 +174,28 @@ class MealRepository {
   }) async {
     final normalizedDate = Meal.normalizeLocalDate(date);
     final docId = Meal.buildDeterministicId(normalizedDate, slot);
+
+    if (_isMockUser(userId)) {
+      final existingIdx = _memoryMeals.indexWhere((m) => m.id == docId);
+      if (existingIdx != -1) {
+        final existing = _memoryMeals[existingIdx];
+        if (!existing.isCancelled) return existing;
+      }
+      final newMeal = Meal(
+        id: docId,
+        userId: userId,
+        mealDate: normalizedDate,
+        slot: slot,
+        status: MealStatus.planned,
+      );
+      if (existingIdx != -1) {
+        _memoryMeals[existingIdx] = newMeal;
+      } else {
+        _memoryMeals.add(newMeal);
+      }
+      return newMeal;
+    }
+
     final docRef = _mealDoc(userId, docId);
 
     return _firestore.runTransaction((txn) async {
@@ -151,10 +224,18 @@ class MealRepository {
     required String userId,
     required String mealId,
   }) async {
-    final snapshot = await _itemsRef(userId, mealId).get();
-    return snapshot.docs
-        .map((doc) => MealItem.fromMap(_normalizeMap(doc.data()), id: doc.id))
-        .toList();
+    final memoryItems = _memoryMealItems[mealId] ?? const [];
+    if (_isMockUser(userId)) return memoryItems;
+
+    try {
+      final snapshot = await _itemsRef(userId, mealId).get();
+      if (snapshot.docs.isEmpty) return memoryItems;
+      return snapshot.docs
+          .map((doc) => MealItem.fromMap(_normalizeMap(doc.data()), id: doc.id))
+          .toList();
+    } catch (_) {
+      return memoryItems;
+    }
   }
 
   /// Streams items belonging to [mealId] in real time.
@@ -162,27 +243,41 @@ class MealRepository {
     required String userId,
     required String mealId,
   }) {
+    final memoryItems = _memoryMealItems[mealId] ?? const [];
+    if (_isMockUser(userId)) {
+      return Stream.value(memoryItems);
+    }
+
     return _itemsRef(userId, mealId).snapshots().map(
-          (snapshot) => snapshot.docs
-              .map(
-                (doc) => MealItem.fromMap(_normalizeMap(doc.data()), id: doc.id),
-              )
-              .toList(),
-        );
+          (snapshot) {
+            if (snapshot.docs.isEmpty) return memoryItems;
+            return snapshot.docs
+                .map(
+                  (doc) => MealItem.fromMap(_normalizeMap(doc.data()), id: doc.id),
+                )
+                .toList();
+          },
+        ).handleError((_) => memoryItems);
   }
 
   /// Adds a recipe or standalone food item to a `PLANNED` meal (`MOD-04-03`, `MOD-04-04`).
-  ///
-  /// Never modifies pantry stock. Generates a new document ID if [item.id] is `'new'`.
   Future<MealItem> addMealItem({
     required String userId,
     required MealItem item,
   }) async {
+    final itemId = item.id == 'new' || item.id.isEmpty
+        ? 'item_${DateTime.now().microsecondsSinceEpoch}'
+        : item.id;
+    final persistedItem = item.copyWith(id: itemId);
+
+    _memoryMealItems.putIfAbsent(item.mealId, () => []).add(persistedItem);
+
+    if (_isMockUser(userId)) {
+      return persistedItem;
+    }
+
     final mealRef = _mealDoc(userId, item.mealId);
-    final itemRef = item.id == 'new'
-        ? _itemsRef(userId, item.mealId).doc()
-        : _itemsRef(userId, item.mealId).doc(item.id);
-    final persistedItem = item.id == itemRef.id ? item : item.copyWith(id: itemRef.id);
+    final itemRef = _itemsRef(userId, item.mealId).doc(itemId);
 
     await _firestore.runTransaction((txn) async {
       await _requirePlannedMealInTxn(txn, mealRef);
@@ -203,6 +298,14 @@ class MealRepository {
       throw ArgumentError.value(quantity, 'quantity', 'Quantity must be > 0');
     }
 
+    final items = _memoryMealItems[mealId] ?? [];
+    final idx = items.indexWhere((i) => i.id == itemId);
+    if (idx != -1) {
+      items[idx] = items[idx].copyWith(quantity: quantity);
+    }
+
+    if (_isMockUser(userId)) return;
+
     final mealRef = _mealDoc(userId, mealId);
     final itemRef = _itemsRef(userId, mealId).doc(itemId);
 
@@ -222,6 +325,10 @@ class MealRepository {
     required String mealId,
     required String itemId,
   }) async {
+    _memoryMealItems[mealId]?.removeWhere((i) => i.id == itemId);
+
+    if (_isMockUser(userId)) return;
+
     final mealRef = _mealDoc(userId, mealId);
     final itemRef = _itemsRef(userId, mealId).doc(itemId);
 
@@ -236,8 +343,6 @@ class MealRepository {
   }
 
   /// Moves a `PLANNED` meal and its items to a new `(newDate, newSlot)` (`MOD-04-05`).
-  ///
-  /// Throws [MealSlotConflictException] if the target slot already has a non-cancelled meal.
   Future<Meal> rescheduleMeal({
     required String userId,
     required String mealId,
@@ -250,6 +355,21 @@ class MealRepository {
       final current = await getMealById(userId: userId, mealId: mealId);
       if (current == null) throw const MealNotFoundException();
       return current;
+    }
+
+    if (_isMockUser(userId)) {
+      final sIdx = _memoryMeals.indexWhere((m) => m.id == mealId);
+      if (sIdx == -1) throw const MealNotFoundException();
+      final source = _memoryMeals[sIdx];
+      final movedMeal = source.copyWith(
+        id: targetId,
+        mealDate: normalizedDate,
+        slot: newSlot,
+      );
+      _memoryMeals[sIdx] = movedMeal;
+      final items = _memoryMealItems.remove(mealId) ?? [];
+      _memoryMealItems[targetId] = items.map((i) => i.copyWith(mealId: targetId)).toList();
+      return movedMeal;
     }
 
     final sourceRef = _mealDoc(userId, mealId);
@@ -289,6 +409,13 @@ class MealRepository {
     required String userId,
     required String mealId,
   }) async {
+    final idx = _memoryMeals.indexWhere((m) => m.id == mealId);
+    if (idx != -1) {
+      _memoryMeals[idx] = _memoryMeals[idx].copyWith(status: MealStatus.cancelled);
+    }
+
+    if (_isMockUser(userId)) return;
+
     final mealRef = _mealDoc(userId, mealId);
 
     await _firestore.runTransaction((txn) async {
@@ -300,12 +427,43 @@ class MealRepository {
     });
   }
 
+  /// Marks a meal as completed (`MOD-04-08`).
+  Future<Meal> markMealCompleted({
+    required String userId,
+    required String mealId,
+    required DateTime completedAt,
+  }) async {
+    final idx = _memoryMeals.indexWhere((m) => m.id == mealId);
+    if (idx != -1) {
+      _memoryMeals[idx] = _memoryMeals[idx].copyWith(
+        status: MealStatus.completed,
+        completedAt: completedAt,
+      );
+      return _memoryMeals[idx];
+    }
+
+    final docRef = _mealDoc(userId, mealId);
+    await docRef.update({
+      'trang_thai': MealStatus.completed.value,
+      'hoan_thanh_luc': completedAt.toIso8601String(),
+    });
+    final updated = await getMealById(userId: userId, mealId: mealId);
+    return updated!;
+  }
+
   /// Sets or clears `gio_nhac` on a `PLANNED` meal (`MOD-04-06`).
   Future<void> updateMealReminder({
     required String userId,
     required String mealId,
     DateTime? reminderAt,
   }) async {
+    final idx = _memoryMeals.indexWhere((m) => m.id == mealId);
+    if (idx != -1) {
+      _memoryMeals[idx] = _memoryMeals[idx].copyWith(reminderAt: reminderAt);
+    }
+
+    if (_isMockUser(userId)) return;
+
     final mealRef = _mealDoc(userId, mealId);
 
     await _firestore.runTransaction((txn) async {

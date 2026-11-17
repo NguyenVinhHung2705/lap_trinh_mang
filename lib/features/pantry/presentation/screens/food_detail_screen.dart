@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../data/models/food_item.dart';
 import '../../data/models/food_batch.dart';
 import '../providers/pantry_providers.dart';
@@ -17,6 +18,7 @@ class FoodDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final repo = ref.read(pantryRepositoryProvider);
+    final userId = ref.watch(currentUserIdProvider);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -31,7 +33,7 @@ class FoodDetailScreen extends ConsumerWidget {
         iconTheme: const IconThemeData(color: AppColors.textPrimary),
       ),
       body: StreamBuilder<List<FoodBatch>>(
-        stream: repo.watchBatchesForFood('mock_user_nguyen_van_dinh', food.id),
+        stream: repo.watchBatchesForFood(userId, food.id),
         builder: (context, snapshot) {
           final batches = snapshot.data ?? [];
 
@@ -73,7 +75,16 @@ class FoodDetailScreen extends ConsumerWidget {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           const Text('Ngưỡng cảnh báo sắp hết:', style: TextStyle(color: AppColors.textSecondary)),
-                          Text('${food.minimumStock} ${food.baseUnit}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                          InkWell(
+                            onTap: () => _showEditThresholdDialog(context, ref, userId),
+                            child: Row(
+                              children: [
+                                Text('${food.minimumStock} ${food.baseUnit}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                const SizedBox(width: 4),
+                                const Icon(Icons.edit_outlined, size: 16, color: AppColors.primary),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ],
@@ -116,7 +127,7 @@ class FoodDetailScreen extends ConsumerWidget {
                       batch: batch,
                       onDiscard: () {
                         repo.discardBatch(
-                          userId: 'mock_user_nguyen_van_dinh',
+                          userId: userId,
                           batchId: batch.id,
                           reason: 'Người dùng hủy lô khỏi kho',
                         );
@@ -130,6 +141,60 @@ class FoodDetailScreen extends ConsumerWidget {
             ),
           );
         },
+      ),
+    );
+  }
+
+  void _showEditThresholdDialog(BuildContext context, WidgetRef ref, String userId) {
+    final controller = TextEditingController(text: food.minimumStock.toString());
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Cấu hình tồn tối thiểu'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Nhập ngưỡng tồn kho tối thiểu cho "${food.name}":', style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                suffixText: food.baseUnit,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Hủy'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () async {
+              final val = double.tryParse(controller.text.trim());
+              if (val != null && val >= 0) {
+                await ref.read(pantryRepositoryProvider).updateFoodMinimumStock(userId, food.id, val);
+                if (context.mounted) {
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Đã cập nhật ngưỡng tồn kho: $val ${food.baseUnit}')),
+                  );
+                }
+              }
+            },
+            child: const Text('Lưu'),
+          ),
+        ],
       ),
     );
   }

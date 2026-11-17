@@ -130,11 +130,13 @@ class ReminderService {
     FirebaseFirestore? firestore,
   })  : _mealRepository = mealRepository,
         _scheduler = scheduler ?? FlutterLocalNotificationScheduler(),
-        _firestore = firestore ?? FirebaseFirestore.instance;
+        _customFirestore = firestore;
 
   final MealRepository _mealRepository;
   final LocalNotificationScheduler _scheduler;
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
 
   CollectionReference<Map<String, dynamic>> _notificationsRef(String userId) {
     return _firestore.collection('users').doc(userId).collection('notifications');

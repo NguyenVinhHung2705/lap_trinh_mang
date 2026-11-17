@@ -5,6 +5,7 @@ import '../../data/meal_repository.dart';
 import '../../data/models/consumption_request.dart';
 import '../../data/models/meal.dart';
 import '../../domain/stock_deduction_service.dart';
+import '../providers/meal_calendar_provider.dart';
 
 /// Provides [PantryBatchReader] (`MOD-01` integration point).
 final pantryBatchReaderProvider = Provider<PantryBatchReader>((ref) {

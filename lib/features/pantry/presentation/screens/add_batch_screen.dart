@@ -69,7 +69,7 @@ class _AddBatchScreenState extends ConsumerState<AddBatchScreen> {
     final quantity = double.tryParse(_quantityController.text) ?? 1.0;
 
     repo.addFoodBatch(
-      userId: 'mock_user_nguyen_van_dinh',
+      userId: ref.read(pantryUserIdProvider),
       foodName: _nameController.text.trim(),
       categoryName: _selectedCategory,
       baseUnit: _unitController.text.trim(),

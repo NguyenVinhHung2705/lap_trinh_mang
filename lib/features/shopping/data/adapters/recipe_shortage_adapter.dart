@@ -26,13 +26,15 @@ class FirestoreRecipeShortageAdapter implements RecipeShortageReader {
   FirestoreRecipeShortageAdapter({
     FirebaseFirestore? firestore,
     PantryReader? pantryReader,
-  })  : _firestore = firestore ?? FirebaseFirestore.instance,
+  })  : _customFirestore = firestore,
         _pantryReader = pantryReader ??
             FirestorePantryAdapter(
-              firestore: firestore ?? FirebaseFirestore.instance,
+              firestore: firestore,
             );
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
   final PantryReader _pantryReader;
 
   @override
