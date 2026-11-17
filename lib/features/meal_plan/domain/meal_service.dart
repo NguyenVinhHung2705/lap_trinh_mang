@@ -252,15 +252,15 @@ class FirestoreFoodCatalogReader implements FoodCatalogReader {
       }
     } catch (_) {}
 
-    final mock = PantryMockData.initialFoods.cast<dynamic>().firstWhere(
+    final mock = PantryMockData.initialFoods.firstWhere(
           (f) => f.id == foodId,
           orElse: () => null,
         );
     if (mock != null) {
       return FoodSummary(
-        id: mock.id as String,
-        name: mock.name as String,
-        baseUnitId: mock.defaultUnit as String,
+        id: mock.id,
+        name: mock.name,
+        baseUnitId: mock.baseUnit,
       );
     }
     return null;
@@ -292,7 +292,7 @@ class FirestoreFoodCatalogReader implements FoodCatalogReader {
         .map<FoodSummary>((f) => FoodSummary(
               id: f.id,
               name: f.name,
-              baseUnitId: f.defaultUnit,
+              baseUnitId: f.baseUnit,
             ))
         .toList();
   }
