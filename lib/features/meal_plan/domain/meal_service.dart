@@ -114,9 +114,11 @@ abstract interface class FoodCatalogReader {
 /// Default Firestore implementation of [RecipeCatalogReader] over `cong_thuc`.
 class FirestoreRecipeCatalogReader implements RecipeCatalogReader {
   FirestoreRecipeCatalogReader({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+      : _customFirestore = firestore;
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
 
   @override
   Future<RecipeSummary?> getRecipe(String recipeId) async {
@@ -176,9 +178,11 @@ class FirestoreRecipeCatalogReader implements RecipeCatalogReader {
 /// Default Firestore implementation of [FoodCatalogReader] over `thuc_pham` & `don_vi`.
 class FirestoreFoodCatalogReader implements FoodCatalogReader {
   FirestoreFoodCatalogReader({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+      : _customFirestore = firestore;
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
 
   @override
   Future<FoodSummary?> getFood(String foodId) async {

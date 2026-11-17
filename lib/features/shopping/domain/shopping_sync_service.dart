@@ -63,12 +63,14 @@ class ShoppingSyncService {
   })  : _repository = shoppingRepository,
         _pantryReader = pantryReader ?? FirestorePantryAdapter(),
         _pantrySyncWriter = pantrySyncWriter ?? FirestorePantryAdapter(),
-        _firestore = firestore ?? FirebaseFirestore.instance;
+        _customFirestore = firestore;
 
   final ShoppingRepository _repository;
   final PantryReader _pantryReader;
   final PantrySyncWriter _pantrySyncWriter;
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
 
   /// Generates preview of items before executing sync (`MOD-02-07` / `MOD-02-08`).
   Future<ShoppingSyncPreview> previewSync({
@@ -118,6 +120,57 @@ class ShoppingSyncService {
     required String listId,
     bool completeListIfUnboughtRemain = false,
   }) async {
+    if (userId.startsWith('mock_') || userId.startsWith('guest_')) {
+      final currentList = await _repository.getShoppingList(
+        userId: userId,
+        listId: listId,
+      );
+      if (currentList == null) {
+        throw const ShoppingNotFoundException('Danh sách mua sắm không tồn tại.');
+      }
+      final items = await _repository.getItems(
+        userId: userId,
+        listId: listId,
+      );
+      final candidates = items
+          .where((it) => it.isBought && !it.isSynced && it.actualQuantity > 0)
+          .toList();
+      final now = DateTime.now();
+      for (final item in candidates) {
+        await _repository.updateItem(
+          userId: userId,
+          listId: listId,
+          item: item.copyWith(isSynced: true),
+        );
+      }
+      final unboughtCount =
+          items.where((it) => !it.isBought && !it.isSynced).length;
+      final totalSyncedNow =
+          items.where((it) => it.isSynced).length + candidates.length;
+      final shouldComplete =
+          unboughtCount == 0 || completeListIfUnboughtRemain;
+
+      await _repository.updateShoppingList(
+        userId: userId,
+        list: currentList.copyWith(
+          status: shouldComplete
+              ? ShoppingListStatus.completed
+              : ShoppingListStatus.open,
+          completedAt: shouldComplete ? now : currentList.completedAt,
+          syncedItems: totalSyncedNow,
+        ),
+      );
+
+      return ShoppingSyncResult(
+        listId: listId,
+        syncedCount: candidates.length,
+        retainedCount: unboughtCount,
+        isListCompleted: shouldComplete,
+        syncedItems: candidates,
+        message: 'Đã đồng bộ thành công ${candidates.length} mục vào kho.',
+      );
+    }
+
     final listRef = _firestore
         .collection('users')
         .doc(userId)

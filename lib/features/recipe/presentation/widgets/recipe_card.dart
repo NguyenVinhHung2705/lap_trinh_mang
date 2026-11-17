@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../data/models/recipe.dart';
@@ -58,15 +59,25 @@ class RecipeCard extends StatelessWidget {
                     height: 90,
                     color: primaryTint,
                     child: recipe.imageUrl != null && recipe.imageUrl!.isNotEmpty
-                        ? Image.network(
-                            recipe.imageUrl!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Icon(
-                              Icons.restaurant_menu,
-                              size: 40,
-                              color: primary,
-                            ),
-                          )
+                        ? (recipe.imageUrl!.startsWith('http')
+                            ? Image.network(
+                                recipe.imageUrl!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => const Icon(
+                                  Icons.restaurant_menu,
+                                  size: 40,
+                                  color: primary,
+                                ),
+                              )
+                            : Image.file(
+                                File(recipe.imageUrl!),
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => const Icon(
+                                  Icons.restaurant_menu,
+                                  size: 40,
+                                  color: primary,
+                                ),
+                              ))
                         : const Icon(
                             Icons.restaurant_menu,
                             size: 40,

@@ -45,7 +45,6 @@ class AuthGateScreen extends ConsumerWidget {
       ),
       data: (user) {
         if (user == null) return const SignInScreen();
-        if (!user.emailVerified) return const VerifyEmailScreen();
         return authenticatedBuilder?.call(context) ?? const ProfileScreen();
       },
     );

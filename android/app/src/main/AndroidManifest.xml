@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="lap_trinh_mang"
+        android:label="smart_food_life"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

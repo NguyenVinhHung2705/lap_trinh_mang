@@ -7,6 +7,7 @@ import '../widgets/auth_scaffold.dart';
 import 'change_password_screen.dart';
 import 'edit_profile_screen.dart';
 import 'sign_in_screen.dart';
+import 'sign_up_screen.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -14,7 +15,115 @@ class ProfileScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authRepositoryProvider).currentUser;
-    if (user == null) return const SignInScreen();
+    if (user == null) {
+      return Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          title: const Text('Tài khoản'),
+          backgroundColor: AppColors.background,
+          surfaceTintColor: Colors.transparent,
+        ),
+        body: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Card(
+              color: AppColors.surface,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                side: const BorderSide(color: AppColors.border),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  children: [
+                    const CircleAvatar(
+                      radius: 40,
+                      backgroundColor: AppColors.primaryTint,
+                      child: Icon(Icons.person_pin, size: 48, color: AppColors.primary),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Tài khoản Khách / Local',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Bạn đang dùng ứng dụng ở chế độ Local (Offline). Dữ liệu được lưu trong bộ nhớ tạm của thiết bị.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: const Icon(Icons.login),
+                        label: const Text('Đăng nhập bằng Firebase',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const SignInScreen()),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          side: const BorderSide(color: AppColors.primary),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: const Icon(Icons.person_add_outlined, color: AppColors.primary),
+                        label: const Text('Đăng ký tài khoản mới',
+                            style: TextStyle(
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.bold,
+                            )),
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const SignUpScreen()),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextButton.icon(
+                      icon: const Icon(Icons.logout, color: AppColors.statusDanger, size: 18),
+                      label: const Text('Thoát chế độ Local',
+                          style: TextStyle(color: AppColors.statusDanger)),
+                      onPressed: () {
+                        ref.read(isLocalModeProvider.notifier).state = false;
+                        Navigator.of(context).pop();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     final profile = ref.watch(userProfileProvider(user.uid));
 
     return Scaffold(
@@ -29,7 +138,11 @@ class ProfileScreen extends ConsumerWidget {
             onPressed: () async {
               try {
                 await ref.read(authRepositoryProvider).signOut();
+                ref.read(isLocalModeProvider.notifier).state = false;
                 ref.invalidate(authStateProvider);
+                if (context.mounted) {
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                }
               } catch (error) {
                 if (context.mounted) showAuthMessage(context, error.toString());
               }

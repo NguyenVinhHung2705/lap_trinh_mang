@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'models/recipe.dart';
 import 'models/recipe_ingredient.dart';
+import 'recipe_mock_data.dart';
 
 /// Base exception for recipe repository operations.
 class RecipeException implements Exception {
@@ -35,9 +36,21 @@ class RecipePermissionDeniedException extends RecipeException {
 /// - `/users/{userId}/cong_thuc_da_luu/{recipeId}`
 class RecipeRepository {
   RecipeRepository({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+      : _customFirestore = firestore;
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
+
+  // In-memory fallback / mock store for offline & guest usage
+  static final List<Recipe> _memoryRecipes = List<Recipe>.from(RecipeMockData.initialRecipes);
+  static final Map<String, List<RecipeIngredient>> _memoryIngredients =
+      RecipeMockData.initialIngredients.map((k, v) => MapEntry(k, List<RecipeIngredient>.from(v)));
+  static final Map<String, Set<String>> _memorySavedIds = {};
+
+  bool _isMockUser(String userId) {
+    return userId.isEmpty || userId.startsWith('mock_') || userId.startsWith('guest_');
+  }
 
   CollectionReference<Map<String, dynamic>> get _recipesRef {
     return _firestore.collection('cong_thuc');
@@ -62,20 +75,48 @@ class RecipeRepository {
     RecipeSource? sourceFilter,
     bool savedOnly = false,
   }) async {
-    List<String> savedIds = const [];
-    if (savedOnly) {
-      savedIds = await getSavedRecipeIds(userId);
-      if (savedIds.isEmpty) return const [];
+    if (_isMockUser(userId)) {
+      return _filterMemoryRecipes(
+        userId: userId,
+        query: query,
+        sourceFilter: sourceFilter,
+        savedOnly: savedOnly,
+      );
     }
 
-    final snapshot = await _recipesRef.get();
-    return _filterRecipes(
-      snapshot.docs,
-      userId: userId,
-      query: query,
-      sourceFilter: sourceFilter,
-      savedIds: savedOnly ? savedIds : null,
-    );
+    try {
+      List<String> savedIds = const [];
+      if (savedOnly) {
+        savedIds = await getSavedRecipeIds(userId);
+        if (savedIds.isEmpty) return const [];
+      }
+
+      final snapshot = await _recipesRef.get();
+      if (snapshot.docs.isEmpty) {
+        // Fallback to mock data if Firestore is empty
+        return _filterMemoryRecipes(
+          userId: userId,
+          query: query,
+          sourceFilter: sourceFilter,
+          savedOnly: savedOnly,
+        );
+      }
+
+      return _filterRecipes(
+        snapshot.docs,
+        userId: userId,
+        query: query,
+        sourceFilter: sourceFilter,
+        savedIds: savedOnly ? savedIds : null,
+      );
+    } catch (_) {
+      return _filterMemoryRecipes(
+        userId: userId,
+        query: query,
+        sourceFilter: sourceFilter,
+        savedOnly: savedOnly,
+      );
+    }
   }
 
   /// Streams accessible recipes in real-time.
@@ -85,10 +126,28 @@ class RecipeRepository {
     RecipeSource? sourceFilter,
     bool savedOnly = false,
   }) {
+    if (_isMockUser(userId)) {
+      final recipes = _filterMemoryRecipes(
+        userId: userId,
+        query: query,
+        sourceFilter: sourceFilter,
+        savedOnly: savedOnly,
+      );
+      return Stream.value(recipes);
+    }
+
     if (savedOnly) {
       return watchSavedRecipeIds(userId).asyncMap((savedIds) async {
         if (savedIds.isEmpty) return const <Recipe>[];
         final snapshot = await _recipesRef.get();
+        if (snapshot.docs.isEmpty) {
+          return _filterMemoryRecipes(
+            userId: userId,
+            query: query,
+            sourceFilter: sourceFilter,
+            savedOnly: true,
+          );
+        }
         return _filterRecipes(
           snapshot.docs,
           userId: userId,
@@ -96,51 +155,92 @@ class RecipeRepository {
           sourceFilter: sourceFilter,
           savedIds: savedIds,
         );
+      }).handleError((_) {
+        return _filterMemoryRecipes(
+          userId: userId,
+          query: query,
+          sourceFilter: sourceFilter,
+          savedOnly: savedOnly,
+        );
       });
     }
 
     return _recipesRef.snapshots().map(
-          (snapshot) => _filterRecipes(
-            snapshot.docs,
+          (snapshot) {
+            if (snapshot.docs.isEmpty) {
+              return _filterMemoryRecipes(
+                userId: userId,
+                query: query,
+                sourceFilter: sourceFilter,
+              );
+            }
+            return _filterRecipes(
+              snapshot.docs,
+              userId: userId,
+              query: query,
+              sourceFilter: sourceFilter,
+            );
+          },
+        ).handleError((_) {
+          return _filterMemoryRecipes(
             userId: userId,
             query: query,
             sourceFilter: sourceFilter,
-          ),
-        );
+            savedOnly: savedOnly,
+          );
+        });
   }
 
   /// Fetches a single recipe by [recipeId].
   Future<Recipe?> getRecipeById(String recipeId) async {
-    final doc = await _recipeDoc(recipeId).get();
-    if (!doc.exists || doc.data() == null) return null;
-    return Recipe.fromMap(_normalizeMap(doc.data()!), id: doc.id);
+    final memoryRecipe = _memoryRecipes.cast<Recipe?>().firstWhere(
+          (r) => r?.id == recipeId,
+          orElse: () => null,
+        );
+    try {
+      final doc = await _recipeDoc(recipeId).get();
+      if (!doc.exists || doc.data() == null) return memoryRecipe;
+      return Recipe.fromMap(_normalizeMap(doc.data()!), id: doc.id);
+    } catch (_) {
+      return memoryRecipe;
+    }
   }
 
   /// Reads ingredients for a recipe (`nguyen_lieu_cong_thuc`).
   Future<List<RecipeIngredient>> getRecipeIngredients(String recipeId) async {
-    final snapshot = await _ingredientsRef(recipeId).get();
-    return snapshot.docs
-        .map(
-          (doc) => RecipeIngredient.fromMap(
-            _normalizeMap(doc.data()),
-            id: doc.id,
-          ),
-        )
-        .toList();
+    final memoryList = _memoryIngredients[recipeId] ?? const [];
+    try {
+      final snapshot = await _ingredientsRef(recipeId).get();
+      if (snapshot.docs.isEmpty) return memoryList;
+      return snapshot.docs
+          .map(
+            (doc) => RecipeIngredient.fromMap(
+              _normalizeMap(doc.data()),
+              id: doc.id,
+            ),
+          )
+          .toList();
+    } catch (_) {
+      return memoryList;
+    }
   }
 
   /// Streams ingredients for a recipe in real time.
   Stream<List<RecipeIngredient>> watchRecipeIngredients(String recipeId) {
+    final memoryList = _memoryIngredients[recipeId] ?? const [];
     return _ingredientsRef(recipeId).snapshots().map(
-          (snapshot) => snapshot.docs
-              .map(
-                (doc) => RecipeIngredient.fromMap(
-                  _normalizeMap(doc.data()),
-                  id: doc.id,
-                ),
-              )
-              .toList(),
-        );
+          (snapshot) {
+            if (snapshot.docs.isEmpty) return memoryList;
+            return snapshot.docs
+                .map(
+                  (doc) => RecipeIngredient.fromMap(
+                    _normalizeMap(doc.data()),
+                    id: doc.id,
+                  ),
+                )
+                .toList();
+          },
+        ).handleError((_) => memoryList);
   }
 
   /// Creates a new recipe and writes its ingredient subcollection atomically.
@@ -148,24 +248,40 @@ class RecipeRepository {
     required Recipe recipe,
     required List<RecipeIngredient> ingredients,
   }) async {
-    final docRef = recipe.id == 'new' || recipe.id.isEmpty
-        ? _recipesRef.doc()
-        : _recipeDoc(recipe.id);
+    final newId = recipe.id == 'new' || recipe.id.isEmpty
+        ? 'recipe_${DateTime.now().millisecondsSinceEpoch}'
+        : recipe.id;
+    final persistedRecipe = recipe.copyWith(id: newId);
 
-    final persistedRecipe = recipe.copyWith(id: docRef.id);
+    _memoryRecipes.insert(0, persistedRecipe);
+    _memoryIngredients[newId] = ingredients
+        .map((i) => i.copyWith(
+              id: i.id == 'new' || i.id.isEmpty
+                  ? 'ing_${DateTime.now().microsecondsSinceEpoch}_${i.foodId}'
+                  : i.id,
+              recipeId: newId,
+            ))
+        .toList();
 
-    final batch = _firestore.batch();
-    batch.set(docRef, persistedRecipe.toMap());
-
-    for (final ing in ingredients) {
-      final ingRef = ing.id == 'new' || ing.id.isEmpty
-          ? _ingredientsRef(docRef.id).doc(ing.foodId)
-          : _ingredientsRef(docRef.id).doc(ing.id);
-      final persistedIng = ing.copyWith(id: ingRef.id, recipeId: docRef.id);
-      batch.set(ingRef, persistedIng.toMap());
+    if (_isMockUser(recipe.authorId)) {
+      return persistedRecipe;
     }
 
-    await batch.commit();
+    try {
+      final docRef = _recipeDoc(newId);
+      final batch = _firestore.batch();
+      batch.set(docRef, persistedRecipe.toMap());
+
+      for (final ing in _memoryIngredients[newId]!) {
+        final ingRef = _ingredientsRef(newId).doc(ing.id);
+        batch.set(ingRef, ing.toMap());
+      }
+
+      await batch.commit();
+    } catch (_) {
+      // Ignored for offline mode
+    }
+
     return persistedRecipe;
   }
 
@@ -175,6 +291,14 @@ class RecipeRepository {
     required Recipe recipe,
     required List<RecipeIngredient> ingredients,
   }) async {
+    final idx = _memoryRecipes.indexWhere((r) => r.id == recipe.id);
+    if (idx != -1) {
+      _memoryRecipes[idx] = recipe;
+      _memoryIngredients[recipe.id] = ingredients;
+    }
+
+    if (_isMockUser(userId)) return;
+
     final existing = await getRecipeById(recipe.id);
     if (existing == null) {
       throw const RecipeNotFoundException();
@@ -207,6 +331,11 @@ class RecipeRepository {
     required String userId,
     required String recipeId,
   }) async {
+    _memoryRecipes.removeWhere((r) => r.id == recipeId);
+    _memoryIngredients.remove(recipeId);
+
+    if (_isMockUser(userId)) return;
+
     final existing = await getRecipeById(recipeId);
     if (existing == null) {
       throw const RecipeNotFoundException();
@@ -232,31 +361,92 @@ class RecipeRepository {
     required String userId,
     required String recipeId,
   }) async {
-    final docRef = _savedRef(userId).doc(recipeId);
-    final doc = await docRef.get();
-    if (doc.exists) {
-      await docRef.delete();
-      return false; // Now un-saved
+    final userSaved = _memorySavedIds.putIfAbsent(userId, () => <String>{});
+    if (userSaved.contains(recipeId)) {
+      userSaved.remove(recipeId);
     } else {
-      await docRef.set({
-        'ma_cong_thuc': recipeId,
-        'ngay_luu': DateTime.now().toIso8601String(),
-      });
-      return true; // Now saved
+      userSaved.add(recipeId);
+    }
+
+    if (_isMockUser(userId)) {
+      return userSaved.contains(recipeId);
+    }
+
+    try {
+      final docRef = _savedRef(userId).doc(recipeId);
+      final doc = await docRef.get();
+      if (doc.exists) {
+        await docRef.delete();
+        return false;
+      } else {
+        await docRef.set({
+          'ma_cong_thuc': recipeId,
+          'ngay_luu': DateTime.now().toIso8601String(),
+        });
+        return true;
+      }
+    } catch (_) {
+      return userSaved.contains(recipeId);
     }
   }
 
   /// Gets list of saved recipe IDs for [userId].
   Future<List<String>> getSavedRecipeIds(String userId) async {
-    final snap = await _savedRef(userId).get();
-    return snap.docs.map((doc) => doc.id).toList();
+    final memoryList = _memorySavedIds[userId]?.toList() ?? const [];
+    if (_isMockUser(userId)) return memoryList;
+    try {
+      final snap = await _savedRef(userId).get();
+      return snap.docs.map((doc) => doc.id).toList();
+    } catch (_) {
+      return memoryList;
+    }
   }
 
   /// Streams list of saved recipe IDs for real-time bookmark toggles.
   Stream<List<String>> watchSavedRecipeIds(String userId) {
+    final memoryList = _memorySavedIds[userId]?.toList() ?? const [];
+    if (_isMockUser(userId)) {
+      return Stream.value(memoryList);
+    }
     return _savedRef(userId)
         .snapshots()
-        .map((snap) => snap.docs.map((doc) => doc.id).toList());
+        .map((snap) => snap.docs.map((doc) => doc.id).toList())
+        .handleError((_) => memoryList);
+  }
+
+  /// Seeds initial recipes into Firestore if the collection is empty.
+  Future<void> seedInitialRecipesIfEmpty() async {
+    try {
+      final snap = await _recipesRef.limit(1).get();
+      if (snap.docs.isEmpty) {
+        for (final recipe in RecipeMockData.initialRecipes) {
+          final ingList = RecipeMockData.initialIngredients[recipe.id] ?? const [];
+          await createRecipe(recipe: recipe, ingredients: ingList);
+        }
+      }
+    } catch (_) {
+      // Non-fatal if offline
+    }
+  }
+
+  List<Recipe> _filterMemoryRecipes({
+    required String userId,
+    required String query,
+    RecipeSource? sourceFilter,
+    bool savedOnly = false,
+  }) {
+    final lowerQuery = query.trim().toLowerCase();
+    final savedIds = _memorySavedIds[userId] ?? const <String>{};
+
+    return _memoryRecipes.where((recipe) {
+      if (!recipe.canUserAccess(userId)) return false;
+      if (sourceFilter != null && recipe.source != sourceFilter) return false;
+      if (savedOnly && !savedIds.contains(recipe.id)) return false;
+      if (lowerQuery.isNotEmpty && !recipe.name.toLowerCase().contains(lowerQuery)) {
+        return false;
+      }
+      return true;
+    }).toList();
   }
 
   List<Recipe> _filterRecipes(

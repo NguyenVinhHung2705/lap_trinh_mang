@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "881291548321",
+    "project_id": "ltm17-11-2026",
+    "storage_bucket": "ltm17-11-2026.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:881291548321:android:e12aa4aaa095b06e6402e0",
+        "android_client_info": {
+          "package_name": "com.example.smart_food_life"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAIqSTJs2bMpKDyAPvxkH17b5cbdIeS-NM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

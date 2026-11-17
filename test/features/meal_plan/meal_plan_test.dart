@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:smart_food_life/features/meal_plan/data/meal_repository.dart';
 import 'package:smart_food_life/features/meal_plan/data/models/consumption_request.dart';
 import 'package:smart_food_life/features/meal_plan/data/models/meal.dart';
 import 'package:smart_food_life/features/meal_plan/data/models/meal_item.dart';
@@ -234,16 +235,16 @@ void main() {
           id: 'batch_far_expiry',
           foodId: 'food_milk',
           locationId: 'door',
-          importDate: DateTime(2026, 11, 10),
-          expiryDate: DateTime(2026, 11, 28), // Later expiry
+          importDate: DateTime.now().subtract(const Duration(days: 7)),
+          expiryDate: DateTime.now().add(const Duration(days: 10)), // Later expiry
           availableQuantity: 1000.0,
         ),
         PantryBatchInfo(
           id: 'batch_near_expiry',
           foodId: 'food_milk',
           locationId: 'shelf_1',
-          importDate: DateTime(2026, 11, 08),
-          expiryDate: DateTime(2026, 11, 16), // Earliest expiry (FEFO first!)
+          importDate: DateTime.now().subtract(const Duration(days: 9)),
+          expiryDate: DateTime.now().add(const Duration(days: 2)), // Earliest expiry (FEFO first!)
           availableQuantity: 400.0,
         ),
       ]);
@@ -291,7 +292,6 @@ void main() {
 }
 
 /// Minimal mock to satisfy constructor dependency in offline tests.
-class _DummyMealRepository implements MealRepository {
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+class _DummyMealRepository extends MealRepository {
+  _DummyMealRepository() : super(firestore: null);
 }

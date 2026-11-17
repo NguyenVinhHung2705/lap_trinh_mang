@@ -106,7 +106,11 @@ final mealRepositoryProvider = Provider<MealRepository>((ref) {
 
 /// Provides the authenticated user's UID from Firebase Auth (`MOD-05` contract).
 final currentUserIdProvider = Provider<String?>((ref) {
-  return FirebaseAuth.instance.currentUser?.uid;
+  try {
+    return FirebaseAuth.instance.currentUser?.uid;
+  } catch (_) {
+    return null;
+  }
 });
 
 /// Controller provider for [MealCalendarState].
