@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/meal.dart';
 import '../providers/meal_calendar_provider.dart';
+import 'meal_detail_screen.dart';
 
 /// Callback invoked when the user taps a meal slot on the calendar.
 typedef MealSlotTapCallback = void Function(
@@ -516,9 +517,20 @@ class _DaySlotsSection extends StatelessWidget {
             child: _SlotSummaryCard(
               slot: slot,
               meal: meal,
-              onTap: onMealSlotTap == null
-                  ? null
-                  : () => onMealSlotTap!(selectedDate, slot, meal),
+              onTap: () {
+                if (onMealSlotTap != null) {
+                  onMealSlotTap!(selectedDate, slot, meal);
+                } else {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => MealDetailScreen(
+                        initialDate: selectedDate,
+                        initialSlot: slot,
+                      ),
+                    ),
+                  );
+                }
+              },
             ),
           );
         }),

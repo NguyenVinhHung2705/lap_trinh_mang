@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -141,18 +142,31 @@ class RecipeDetailScreen extends ConsumerWidget {
                     fit: StackFit.expand,
                     children: [
                       recipe.imageUrl != null && recipe.imageUrl!.isNotEmpty
-                          ? Image.network(
-                              recipe.imageUrl!,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                color: primaryTint,
-                                child: const Icon(
-                                  Icons.restaurant_menu,
-                                  size: 80,
-                                  color: primary,
-                                ),
-                              ),
-                            )
+                          ? (recipe.imageUrl!.startsWith('http')
+                              ? Image.network(
+                                  recipe.imageUrl!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Container(
+                                    color: primaryTint,
+                                    child: const Icon(
+                                      Icons.restaurant_menu,
+                                      size: 80,
+                                      color: primary,
+                                    ),
+                                  ),
+                                )
+                              : Image.file(
+                                  File(recipe.imageUrl!),
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Container(
+                                    color: primaryTint,
+                                    child: const Icon(
+                                      Icons.restaurant_menu,
+                                      size: 80,
+                                      color: primary,
+                                    ),
+                                  ),
+                                ))
                           : Container(
                               color: primaryTint,
                               child: const Icon(

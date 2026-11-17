@@ -67,7 +67,9 @@ class FoodBatch {
       expiryDate: map['han_su_dung'] != null
           ? DateTime.tryParse(map['han_su_dung'] as String) ?? DateTime.now()
           : DateTime.now(),
-      quantity: (map['so_luong'] as num?)?.toDouble() ?? 0.0,
+      quantity: (map['so_luong'] as num?)?.toDouble() ??
+          (map['so_luong_ton'] as num?)?.toDouble() ??
+          0.0,
       unit: map['don_vi'] as String? ?? 'phần',
     );
   }

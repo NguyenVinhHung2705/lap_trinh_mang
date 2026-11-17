@@ -33,9 +33,12 @@ class _ShoppingScreenState extends ConsumerState<ShoppingScreen>
   late TabController _tabController;
 
   String get _currentUserId {
-    return widget.userId ??
-        FirebaseAuth.instance.currentUser?.uid ??
-        'test_user_id';
+    if (widget.userId != null) return widget.userId!;
+    try {
+      return FirebaseAuth.instance.currentUser?.uid ?? 'test_user_id';
+    } catch (_) {
+      return 'test_user_id';
+    }
   }
 
   @override

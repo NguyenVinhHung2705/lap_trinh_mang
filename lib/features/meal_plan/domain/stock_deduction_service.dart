@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../../pantry/data/pantry_mock_data.dart';
 import '../data/meal_repository.dart';
 import '../data/models/consumption_request.dart';
 import '../data/models/meal.dart';
@@ -113,9 +114,11 @@ abstract interface class PantryBatchReader {
 /// Default Firestore implementation reading `/users/{uid}/lo_thuc_pham`.
 class FirestorePantryBatchReader implements PantryBatchReader {
   FirestorePantryBatchReader({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+      : _customFirestore = firestore;
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
 
   @override
   Future<List<PantryBatchInfo>> getUsableBatchesForFood({
@@ -124,45 +127,81 @@ class FirestorePantryBatchReader implements PantryBatchReader {
     required DateTime referenceDate,
   }) async {
     final refDateKey = Meal.formatLocalDate(referenceDate);
-    final snapshot = await _firestore
-        .collection('users')
-        .doc(userId)
-        .collection('lo_thuc_pham')
-        .where('ma_thuc_pham', isEqualTo: foodId)
-        .get();
 
-    final batches = <PantryBatchInfo>[];
-    for (final doc in snapshot.docs) {
-      final data = doc.data();
-      final expRaw = data['han_su_dung'];
-      if (expRaw == null) continue;
-
-      final expDate = Meal.parseLocalDate(expRaw);
-      final expKey = Meal.formatLocalDate(expDate);
-      if (expKey.compareTo(refDateKey) < 0) continue; // Expired
-
-      // Compatible with both direct `so_luong_ton` or computed balance
-      final qty = (data['so_luong_ton'] as num?)?.toDouble() ??
-          ((data['so_luong_nhap'] as num?)?.toDouble() ?? 0.0) -
-              ((data['so_luong_xuat'] as num?)?.toDouble() ?? 0.0);
-
-      if (qty <= 0) continue;
-
-      batches.add(
-        PantryBatchInfo(
-          id: doc.id,
-          foodId: foodId,
-          locationId: data['ma_vi_tri'] as String? ?? '',
-          importDate: Meal.parseLocalDate(data['ngay_nhap'] ?? DateTime.now()),
-          expiryDate: expDate,
-          availableQuantity: qty,
-        ),
-      );
+    if (userId.isEmpty || userId.startsWith('mock_') || userId.startsWith('guest_')) {
+      return _getMemoryBatches(foodId, refDateKey);
     }
 
-    // FEFO: Sort by expiry date ASC (earliest expiry first, TC-11)
-    batches.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
-    return batches;
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('lo_thuc_pham')
+          .where('ma_thuc_pham', isEqualTo: foodId)
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        return _getMemoryBatches(foodId, refDateKey);
+      }
+
+      final batches = <PantryBatchInfo>[];
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final expRaw = data['han_su_dung'];
+        if (expRaw == null) continue;
+
+        final expDate = Meal.parseLocalDate(expRaw);
+        final expKey = Meal.formatLocalDate(expDate);
+        if (expKey.compareTo(refDateKey) < 0) continue; // Expired
+
+        // Compatible with both direct `so_luong_ton` or computed balance
+        final qty = (data['so_luong_ton'] as num?)?.toDouble() ??
+            ((data['so_luong_nhap'] as num?)?.toDouble() ?? 0.0) -
+                ((data['so_luong_xuat'] as num?)?.toDouble() ?? 0.0);
+
+        if (qty <= 0) continue;
+
+        batches.add(
+          PantryBatchInfo(
+            id: doc.id,
+            foodId: foodId,
+            locationId: data['ma_vi_tri'] as String? ?? '',
+            importDate: Meal.parseLocalDate(data['ngay_nhap'] ?? DateTime.now()),
+            expiryDate: expDate,
+            availableQuantity: qty,
+          ),
+        );
+      }
+
+      // FEFO: Sort by expiry date ASC (earliest expiry first, TC-11)
+      batches.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
+      return batches;
+    } catch (_) {
+      return _getMemoryBatches(foodId, refDateKey);
+    }
+  }
+
+  List<PantryBatchInfo> _getMemoryBatches(String foodId, String refDateKey) {
+    final memoryBatches = <PantryBatchInfo>[];
+    for (final b in PantryMockData.initialBatches) {
+      if (b.foodId == foodId || foodId.contains(b.foodId) || b.foodId.contains(foodId)) {
+        final expKey = Meal.formatLocalDate(b.expiryDate);
+        if (expKey.compareTo(refDateKey) < 0) continue;
+        if (b.quantity <= 0) continue;
+        memoryBatches.add(
+          PantryBatchInfo(
+            id: b.id,
+            foodId: foodId,
+            locationId: b.locationName ?? 'loc_pantry',
+            importDate: b.importDate,
+            expiryDate: b.expiryDate,
+            availableQuantity: b.quantity,
+          ),
+        );
+      }
+    }
+    memoryBatches.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
+    return memoryBatches;
   }
 }
 
@@ -174,11 +213,13 @@ class StockDeductionService {
     FirebaseFirestore? firestore,
   })  : _mealRepository = mealRepository,
         _batchReader = batchReader ?? FirestorePantryBatchReader(firestore: firestore),
-        _firestore = firestore ?? FirebaseFirestore.instance;
+        _customFirestore = firestore;
 
   final MealRepository _mealRepository;
   final PantryBatchReader _batchReader;
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
 
   CollectionReference<Map<String, dynamic>> _userRef(String userId) {
     return _firestore.collection('users').doc(userId).collection('meals');
@@ -255,6 +296,24 @@ class StockDeductionService {
     required String userId,
     required ConsumptionRequest request,
   }) async {
+    if (userId.isEmpty || userId.startsWith('mock_') || userId.startsWith('guest_')) {
+      final currentMeal = await _mealRepository.getMealById(
+        userId: userId,
+        mealId: request.meal.id,
+      );
+      if (currentMeal == null) throw const MealNotFoundException();
+      if (currentMeal.isCompleted) return currentMeal;
+      if (currentMeal.isCancelled) {
+        throw const MealPlanException('Bữa ăn đã bị hủy, không thể hoàn thành.');
+      }
+      final now = DateTime.now();
+      return _mealRepository.markMealCompleted(
+        userId: userId,
+        mealId: currentMeal.id,
+        completedAt: now,
+      );
+    }
+
     final mealDocRef = _userRef(userId).doc(request.meal.id);
     final movementsRef =
         _firestore.collection('users').doc(userId).collection('bien_dong_kho');

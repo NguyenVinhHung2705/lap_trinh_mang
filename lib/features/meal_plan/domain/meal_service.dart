@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../../pantry/data/pantry_mock_data.dart';
+import '../../recipe/data/recipe_mock_data.dart';
 import '../data/meal_repository.dart';
 import '../data/models/meal.dart';
 import '../data/models/meal_item.dart';
@@ -114,15 +116,37 @@ abstract interface class FoodCatalogReader {
 /// Default Firestore implementation of [RecipeCatalogReader] over `cong_thuc`.
 class FirestoreRecipeCatalogReader implements RecipeCatalogReader {
   FirestoreRecipeCatalogReader({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+      : _customFirestore = firestore;
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
 
   @override
   Future<RecipeSummary?> getRecipe(String recipeId) async {
-    final doc = await _firestore.collection('cong_thuc').doc(recipeId).get();
-    if (!doc.exists || doc.data() == null) return null;
-    return _mapRecipe(doc.id, doc.data()!);
+    try {
+      final doc = await _firestore.collection('cong_thuc').doc(recipeId).get();
+      if (doc.exists && doc.data() != null) {
+        return _mapRecipe(doc.id, doc.data()!);
+      }
+    } catch (_) {}
+
+    final mock = RecipeMockData.initialRecipes.cast<dynamic>().firstWhere(
+          (r) => r.id == recipeId,
+          orElse: () => null,
+        );
+    if (mock != null) {
+      return RecipeSummary(
+        id: mock.id,
+        authorId: mock.authorId,
+        name: mock.name,
+        baseServings: (mock.baseServings as num).toDouble(),
+        visibility: mock.visibility.name.toUpperCase(),
+        cookingMinutes: mock.cookingMinutes,
+        imageUrl: mock.imageUrl,
+      );
+    }
+    return null;
   }
 
   @override
@@ -130,34 +154,71 @@ class FirestoreRecipeCatalogReader implements RecipeCatalogReader {
     String userId, {
     String query = '',
   }) async {
-    final snapshot = await _firestore.collection('cong_thuc').limit(100).get();
     final lowerQuery = query.trim().toLowerCase();
-    return snapshot.docs
-        .map((doc) => _mapRecipe(doc.id, doc.data()))
-        .where((recipe) => recipe.canUserAccess(userId))
+    try {
+      final snapshot = await _firestore.collection('cong_thuc').limit(100).get();
+      if (snapshot.docs.isNotEmpty) {
+        return snapshot.docs
+            .map((doc) => _mapRecipe(doc.id, doc.data()))
+            .where((recipe) => recipe.canUserAccess(userId))
+            .where(
+              (recipe) =>
+                  lowerQuery.isEmpty ||
+                  recipe.name.toLowerCase().contains(lowerQuery),
+            )
+            .toList();
+      }
+    } catch (_) {}
+
+    return RecipeMockData.initialRecipes
         .where(
           (recipe) =>
               lowerQuery.isEmpty ||
               recipe.name.toLowerCase().contains(lowerQuery),
         )
+        .map((r) => RecipeSummary(
+              id: r.id,
+              authorId: r.authorId,
+              name: r.name,
+              baseServings: r.baseServings.toDouble(),
+              visibility: r.visibility.name.toUpperCase(),
+              cookingMinutes: r.cookingMinutes,
+              imageUrl: r.imageUrl,
+            ))
         .toList();
   }
 
   @override
   Future<List<RecipeIngredientDto>> getRecipeIngredients(String recipeId) async {
-    final snapshot = await _firestore
-        .collection('cong_thuc')
-        .doc(recipeId)
-        .collection('nguyen_lieu')
-        .get();
-    return snapshot.docs.map((doc) {
-      final data = doc.data();
-      return RecipeIngredientDto(
-        foodId: data['ma_thuc_pham'] as String? ?? doc.id,
-        unitId: data['ma_don_vi'] as String? ?? '',
-        quantity: (data['so_luong'] as num?)?.toDouble() ?? 0,
-      );
-    }).toList();
+    try {
+      final snapshot = await _firestore
+          .collection('cong_thuc')
+          .doc(recipeId)
+          .collection('nguyen_lieu')
+          .get();
+      if (snapshot.docs.isNotEmpty) {
+        return snapshot.docs.map((doc) {
+          final data = doc.data();
+          return RecipeIngredientDto(
+            foodId: data['ma_thuc_pham'] as String? ?? doc.id,
+            unitId: data['ma_don_vi'] as String? ?? '',
+            quantity: (data['so_luong'] as num?)?.toDouble() ?? 0,
+          );
+        }).toList();
+      }
+    } catch (_) {}
+
+    final ingredients = RecipeMockData.initialIngredients[recipeId];
+    if (ingredients != null) {
+      return ingredients
+          .map((i) => RecipeIngredientDto(
+                foodId: i.foodId,
+                unitId: i.unit,
+                quantity: i.amount,
+              ))
+          .toList();
+    }
+    return const [];
   }
 
   static RecipeSummary _mapRecipe(String id, Map<String, dynamic> data) {
@@ -176,28 +237,67 @@ class FirestoreRecipeCatalogReader implements RecipeCatalogReader {
 /// Default Firestore implementation of [FoodCatalogReader] over `thuc_pham` & `don_vi`.
 class FirestoreFoodCatalogReader implements FoodCatalogReader {
   FirestoreFoodCatalogReader({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+      : _customFirestore = firestore;
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore =>
+      _customFirestore ?? FirebaseFirestore.instance;
 
   @override
   Future<FoodSummary?> getFood(String foodId) async {
-    final doc = await _firestore.collection('thuc_pham').doc(foodId).get();
-    if (!doc.exists || doc.data() == null) return null;
-    return _mapFood(doc.id, doc.data()!);
+    try {
+      final doc = await _firestore.collection('thuc_pham').doc(foodId).get();
+      if (doc.exists && doc.data() != null) {
+        return _mapFood(doc.id, doc.data()!);
+      }
+    } catch (_) {}
+
+    final mock = PantryMockData.initialFoods.cast<dynamic>().firstWhere(
+          (f) => f.id == foodId,
+          orElse: () => null,
+        );
+    if (mock != null) {
+      return FoodSummary(
+        id: mock.id,
+        name: mock.name,
+        baseUnitId: mock.defaultUnit,
+        baseUnitName: mock.defaultUnit,
+        isPerishable: mock.shelfLifeDays > 0,
+      );
+    }
+    return null;
   }
 
   @override
   Future<List<FoodSummary>> searchFoods({String query = ''}) async {
-    final snapshot = await _firestore.collection('thuc_pham').limit(100).get();
     final lowerQuery = query.trim().toLowerCase();
-    return snapshot.docs
-        .map((doc) => _mapFood(doc.id, doc.data()))
+    try {
+      final snapshot = await _firestore.collection('thuc_pham').limit(100).get();
+      if (snapshot.docs.isNotEmpty) {
+        return snapshot.docs
+            .map((doc) => _mapFood(doc.id, doc.data()))
+            .where(
+              (food) =>
+                  lowerQuery.isEmpty ||
+                  food.name.toLowerCase().contains(lowerQuery),
+            )
+            .toList();
+      }
+    } catch (_) {}
+
+    return PantryMockData.initialFoods
         .where(
           (food) =>
               lowerQuery.isEmpty ||
               food.name.toLowerCase().contains(lowerQuery),
         )
+        .map((f) => FoodSummary(
+              id: f.id,
+              name: f.name,
+              baseUnitId: f.defaultUnit,
+              baseUnitName: f.defaultUnit,
+              isPerishable: f.shelfLifeDays > 0,
+            ))
         .toList();
   }
 

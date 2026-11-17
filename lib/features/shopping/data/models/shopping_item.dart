@@ -27,9 +27,6 @@ class ShoppingItem {
     this.syncedAt,
     this.note,
   }) : createdAt = createdAt ?? DateTime.now() {
-    if (id.trim().isEmpty) {
-      throw ArgumentError.value(id, 'id', 'ShoppingItem id must not be empty');
-    }
     if (listId.trim().isEmpty) {
       throw ArgumentError.value(listId, 'listId', 'Shopping list id must not be empty');
     }

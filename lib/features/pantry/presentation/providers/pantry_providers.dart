@@ -1,12 +1,18 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../data/models/food_item.dart';
-import '../data/models/food_batch.dart';
-import '../data/models/stock_movement.dart';
-import '../data/pantry_repository.dart';
+import '../../data/models/food_item.dart';
+import '../../data/models/food_batch.dart';
+import '../../data/models/stock_movement.dart';
+import '../../data/pantry_repository.dart';
+import '../../../auth/presentation/providers/auth_providers.dart';
 
 /// Provider khởi tạo Repository
 final pantryRepositoryProvider = Provider<PantryRepository>((ref) {
   return PantryRepository();
+});
+
+/// UID người dùng (Firebase Auth UID hoặc mock user cho chế độ Local)
+final pantryUserIdProvider = Provider<String>((ref) {
+  return ref.watch(currentUserIdProvider);
 });
 
 /// Filter danh mục thực phẩm
@@ -21,7 +27,8 @@ final pantrySearchQueryProvider = StateProvider<String>((ref) => '');
 /// Stream danh sách tất cả thực phẩm trong kho
 final pantryFoodsStreamProvider = StreamProvider.autoDispose<List<FoodItem>>((ref) {
   final repo = ref.watch(pantryRepositoryProvider);
-  return repo.watchFoodItems('mock_user_nguyen_van_dinh');
+  final userId = ref.watch(pantryUserIdProvider);
+  return repo.watchFoodItems(userId);
 });
 
 /// Stream danh sách thực phẩm đã qua bộ lọc (Search, Category, Expiry)
@@ -55,11 +62,13 @@ final filteredFoodsProvider = Provider.autoDispose<List<FoodItem>>((ref) {
 /// Stream danh sách lô sắp hết hạn / đã hết hạn để hiển thị banner ưu tiên
 final expiringBatchesStreamProvider = StreamProvider.autoDispose<List<FoodBatch>>((ref) {
   final repo = ref.watch(pantryRepositoryProvider);
-  return repo.watchExpiringBatches('mock_user_nguyen_van_dinh');
+  final userId = ref.watch(pantryUserIdProvider);
+  return repo.watchExpiringBatches(userId);
 });
 
 /// Stream lịch sử biến động kho
 final stockMovementsStreamProvider = StreamProvider.autoDispose<List<StockMovement>>((ref) {
   final repo = ref.watch(pantryRepositoryProvider);
-  return repo.watchStockMovements('mock_user_nguyen_van_dinh');
+  final userId = ref.watch(pantryUserIdProvider);
+  return repo.watchStockMovements(userId);
 });
