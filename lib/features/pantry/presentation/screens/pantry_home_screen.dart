@@ -36,6 +36,8 @@ class _PantryHomeScreenState extends ConsumerState<PantryHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final foodsAsync = ref.watch(pantryFoodsStreamProvider);
+    final allFoods = foodsAsync.value ?? [];
     final filteredFoods = ref.watch(filteredFoodsProvider);
     final selectedCategory = ref.watch(selectedCategoryFilterProvider);
     final selectedExpiry = ref.watch(selectedExpiryFilterProvider);
@@ -48,7 +50,7 @@ class _PantryHomeScreenState extends ConsumerState<PantryHomeScreen> {
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text(
-          'Kho Thực Phẩm (MOD-01)',
+          'Kho Thực Phẩm',
           style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
         ),
         backgroundColor: AppColors.surface,
@@ -188,30 +190,68 @@ class _PantryHomeScreenState extends ConsumerState<PantryHomeScreen> {
 
           // 4. Danh sách thực phẩm
           Expanded(
-            child: filteredFoods.isEmpty
+            child: foodsAsync.isLoading
                 ? const Center(
-                    child: Text(
-                      'Không tìm thấy thực phẩm nào phù hợp',
-                      style: TextStyle(color: AppColors.textSecondary),
-                    ),
+                    child: CircularProgressIndicator(color: AppColors.primary),
                   )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: filteredFoods.length,
-                    itemBuilder: (context, index) {
-                      final food = filteredFoods[index];
-                      return FoodCard(
-                        food: food,
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => FoodDetailScreen(food: food),
+                : allFoods.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.inventory_2_outlined,
+                              size: 64,
+                              color: AppColors.textSecondary.withOpacity(0.5),
                             ),
-                          );
-                        },
-                      );
-                    },
-                  ),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'Kho thực phẩm trống',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 32),
+                              child: Text(
+                                'Nhấn "+ Nhập kho" bên dưới để thêm thực phẩm đầu tiên của bạn',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.textSecondary,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : filteredFoods.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'Không tìm thấy thực phẩm nào phù hợp với bộ lọc',
+                              style: TextStyle(color: AppColors.textSecondary),
+                            ),
+                          )
+                        : ListView.builder(
+                            padding: const EdgeInsets.all(16),
+                            itemCount: filteredFoods.length,
+                            itemBuilder: (context, index) {
+                              final food = filteredFoods[index];
+                              return FoodCard(
+                                food: food,
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => FoodDetailScreen(food: food),
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          ),
           ),
         ],
       ),

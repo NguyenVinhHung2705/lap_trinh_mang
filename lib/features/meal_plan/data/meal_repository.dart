@@ -96,11 +96,11 @@ class MealRepository {
           .get();
 
       if (snapshot.docs.isEmpty) {
-        return _filterMemoryMeals(startDate, endDate, includeCancelled);
+        return const [];
       }
       return _mapMealSnapshot(snapshot, includeCancelled: includeCancelled);
     } catch (_) {
-      return _filterMemoryMeals(startDate, endDate, includeCancelled);
+      return const [];
     }
   }
 
@@ -125,13 +125,10 @@ class MealRepository {
         .snapshots()
         .map(
           (snapshot) {
-            if (snapshot.docs.isEmpty) {
-              return _filterMemoryMeals(startDate, endDate, includeCancelled);
-            }
             return _mapMealSnapshot(snapshot, includeCancelled: includeCancelled);
           },
         )
-        .handleError((_) => _filterMemoryMeals(startDate, endDate, includeCancelled));
+        .handleError((_) => const <Meal>[]);
   }
 
   List<Meal> _filterMemoryMeals(DateTime startDate, DateTime endDate, bool includeCancelled) {
@@ -159,10 +156,10 @@ class MealRepository {
 
     try {
       final doc = await _mealDoc(userId, mealId).get();
-      if (!doc.exists || doc.data() == null) return memoryMeal;
+      if (!doc.exists || doc.data() == null) return null;
       return _mealFromDoc(doc);
     } catch (_) {
-      return memoryMeal;
+      return null;
     }
   }
 

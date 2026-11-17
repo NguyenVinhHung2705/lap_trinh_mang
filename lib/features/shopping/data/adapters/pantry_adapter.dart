@@ -387,6 +387,7 @@ class FirestorePantryAdapter implements PantryReader, PantrySyncWriter {
         'ngay_nhap': b.importDate.toIso8601String(),
         'han_su_dung': b.expiryDate.toIso8601String(),
         'so_luong_ton': b.quantity,
+        'so_luong': b.quantity,
       });
 
       // 2. Record ledger movement ('IN')

@@ -31,10 +31,11 @@ class HomeDashboardScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authStateProvider).value;
-    final isLocal = user == null;
+    final isLocalMode = ref.watch(isLocalModeProvider);
+    final isLocal = isLocalMode || user == null;
     final displayName = user?.displayName ??
         (user?.email != null ? user!.email!.split('@').first : 'Khách (Local)');
-    final userId = user?.uid ?? 'mock_user_nguyen_van_dinh';
+    final userId = ref.watch(currentUserIdProvider);
 
     // Dữ liệu từ các Module
     final foodsAsync = ref.watch(pantryFoodsStreamProvider);

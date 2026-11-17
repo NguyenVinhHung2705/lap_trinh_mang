@@ -78,26 +78,40 @@ class AuthRepository {
         password: password,
       );
       final user = credential.user;
-      if (user == null)
+      if (user == null) {
         throw const AuthModuleException('Không tạo được tài khoản.');
+      }
 
-      await user.updateDisplayName(displayName.trim());
-      await _profileDocument(user.uid).set({
-        'uid': user.uid,
-        'email': user.email,
-        'ten_hien_thi': displayName.trim(),
-        'anh_dai_dien_url': null,
-        'so_dien_thoai': null,
-        'email_da_xac_thuc': false,
-        'created_at': FieldValue.serverTimestamp(),
-        'updated_at': FieldValue.serverTimestamp(),
-      });
-      await user.sendEmailVerification();
+      try {
+        await user.updateDisplayName(displayName.trim());
+      } catch (_) {}
+
+      try {
+        await _profileDocument(user.uid).set({
+          'uid': user.uid,
+          'email': user.email,
+          'ten_hien_thi': displayName.trim(),
+          'anh_dai_dien_url': null,
+          'so_dien_thoai': null,
+          'email_da_xac_thuc': false,
+          'created_at': FieldValue.serverTimestamp(),
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+      } catch (_) {}
+
+      try {
+        await user.sendEmailVerification();
+      } catch (_) {
+        // Gửi email xác thực là tùy chọn không bắt buộc làm gián đoạn đăng ký
+      }
+
       return credential;
     } on FirebaseAuthException catch (error) {
-      throw AuthModuleException(_authMessage(error.code));
+      throw AuthModuleException(_authMessage(error.code, error.message));
     } on FirebaseException catch (error) {
       throw AuthModuleException(_firebaseMessage(error));
+    } catch (error) {
+      throw AuthModuleException(error.toString());
     }
   }
 
@@ -109,7 +123,9 @@ class AuthRepository {
         password: password,
       );
     } on FirebaseAuthException catch (error) {
-      throw AuthModuleException(_authMessage(error.code));
+      throw AuthModuleException(_authMessage(error.code, error.message));
+    } catch (error) {
+      throw AuthModuleException(error.toString());
     }
   }
 
@@ -119,7 +135,7 @@ class AuthRepository {
     try {
       await user.sendEmailVerification();
     } on FirebaseAuthException catch (error) {
-      throw AuthModuleException(_authMessage(error.code));
+      throw AuthModuleException(_authMessage(error.code, error.message));
     }
   }
 
@@ -142,7 +158,7 @@ class AuthRepository {
     try {
       await _auth.sendPasswordResetEmail(email: email.trim());
     } on FirebaseAuthException catch (error) {
-      throw AuthModuleException(_authMessage(error.code));
+      throw AuthModuleException(_authMessage(error.code, error.message));
     }
   }
 
@@ -164,7 +180,7 @@ class AuthRepository {
       await user.reauthenticateWithCredential(credential);
       await user.updatePassword(newPassword);
     } on FirebaseAuthException catch (error) {
-      throw AuthModuleException(_authMessage(error.code));
+      throw AuthModuleException(_authMessage(error.code, error.message));
     }
   }
 
@@ -183,7 +199,7 @@ class AuthRepository {
         'updated_at': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } on FirebaseAuthException catch (error) {
-      throw AuthModuleException(_authMessage(error.code));
+      throw AuthModuleException(_authMessage(error.code, error.message));
     } on FirebaseException catch (error) {
       throw AuthModuleException(_firebaseMessage(error));
     }
@@ -256,21 +272,26 @@ class AuthRepository {
     };
   }
 
-  static String _authMessage(String code) => switch (code) {
+  static String _authMessage(String code, [String? detailMessage]) => switch (code) {
         'invalid-email' => 'Email không đúng định dạng.',
-        'email-already-in-use' => 'Email này đã được đăng ký.',
+        'email-already-in-use' => 'Email này đã được đăng ký. Bạn có thể đăng nhập.',
         'weak-password' => 'Mật khẩu cần có ít nhất 6 ký tự.',
         'user-not-found' ||
         'wrong-password' ||
         'invalid-credential' =>
           'Email hoặc mật khẩu chưa chính xác.',
         'user-disabled' => 'Tài khoản đã bị vô hiệu hóa.',
-        'too-many-requests' => 'Bạn thao tác quá nhiều lần. Hãy thử lại sau.',
+        'too-many-requests' => 'Bạn thao tác quá nhiều lần. Hãy thử lại sau ít phút.',
         'requires-recent-login' => 'Vui lòng đăng nhập lại rồi thử lần nữa.',
-        'network-request-failed' => 'Không có kết nối mạng. Hãy thử lại.',
+        'network-request-failed' => 'Không có kết nối mạng. Hãy kiểm tra kết nối WiFi/4G.',
         'operation-not-allowed' =>
-          'Phương thức này chưa được bật trong Firebase.',
-        _ => 'Không thể hoàn tất thao tác tài khoản. Hãy thử lại.',
+          'Phương thức đăng nhập Email/Password chưa được kích hoạt trên Firebase Console. Vui lòng vào Firebase Console > Authentication > Sign-in method và bật Email/Password.',
+        'app-not-authorized' =>
+          'Ứng dụng chưa được cấp quyền (Kiểm tra SHA-1 trên Firebase Console).',
+        'channel-error' => 'Vui lòng điền đầy đủ email và mật khẩu hợp lệ.',
+        _ => detailMessage != null && detailMessage.isNotEmpty
+            ? '$detailMessage (Mã lỗi: $code)'
+            : 'Không thể hoàn tất thao tác tài khoản (Mã lỗi: $code). Hãy thử lại.',
       };
 
   static String _firebaseMessage(FirebaseException error) =>

@@ -43,18 +43,18 @@ class PantryRepository {
   // 1. QUẢN LÝ THỰC PHẨM (thuc_pham)
   // =========================================================================
 
-  /// Stream danh sách thực phẩm trong kho
+  /// Stream danh sách thực phẩm trong kho (MOD-01)
+  /// Phân lập dữ liệu hoàn toàn theo userId: `/users/{uid}/thuc_pham`
   Stream<List<FoodItem>> watchFoodItems(String userId) {
     if (_isMockUser(userId)) {
       return Stream.value(List.unmodifiable(_memoryFoods));
     }
 
     return _userPantryRef(userId).snapshots().map((snapshot) {
-      if (snapshot.docs.isEmpty) return _memoryFoods;
       return snapshot.docs
           .map((doc) => FoodItem.fromMap(doc.id, doc.data()))
           .toList();
-    }).handleError((_) => List.unmodifiable(_memoryFoods));
+    }).handleError((_) => const <FoodItem>[]);
   }
 
   /// Lấy chi tiết 1 thực phẩm theo ID
@@ -69,17 +69,11 @@ class PantryRepository {
     try {
       final doc = await _userPantryRef(userId).doc(foodId).get();
       if (!doc.exists || doc.data() == null) {
-        return _memoryFoods.cast<FoodItem?>().firstWhere(
-              (f) => f?.id == foodId,
-              orElse: () => null,
-            );
+        return null;
       }
       return FoodItem.fromMap(doc.id, doc.data()!);
     } catch (_) {
-      return _memoryFoods.cast<FoodItem?>().firstWhere(
-            (f) => f?.id == foodId,
-            orElse: () => null,
-          );
+      return null;
     }
   }
 
@@ -99,22 +93,13 @@ class PantryRepository {
         .where('ma_thuc_pham', isEqualTo: foodId)
         .snapshots()
         .map((snapshot) {
-      if (snapshot.docs.isEmpty) {
-        final list = _memoryBatches.where((b) => b.foodId == foodId).toList();
-        list.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
-        return list;
-      }
       final batches = snapshot.docs
           .map((doc) => FoodBatch.fromMap(doc.id, doc.data()))
           .where((b) => b.quantity > 0)
           .toList();
       batches.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
       return batches;
-    }).handleError((_) {
-      final list = _memoryBatches.where((b) => b.foodId == foodId).toList();
-      list.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
-      return list;
-    });
+    }).handleError((_) => const <FoodBatch>[]);
   }
 
   /// Stream danh sách toàn bộ các lô đang có trong kho sắp xếp theo FEFO
@@ -126,29 +111,20 @@ class PantryRepository {
     }
 
     return _userBatchesRef(userId).snapshots().map((snapshot) {
-      if (snapshot.docs.isEmpty) {
-        final list = List<FoodBatch>.from(_memoryBatches);
-        list.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
-        return list;
-      }
       final batches = snapshot.docs
           .map((doc) => FoodBatch.fromMap(doc.id, doc.data()))
           .where((b) => b.quantity > 0)
           .toList();
       batches.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
       return batches;
-    }).handleError((_) {
-      final list = List<FoodBatch>.from(_memoryBatches);
-      list.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
-      return list;
-    });
+    }).handleError((_) => const <FoodBatch>[]);
   }
 
   // =========================================================================
   // 3. THÊM LÔ MỚI & ĐỒNG BỘ MUA SẮM (IN - bien_dong_kho)
   // =========================================================================
 
-  /// Thêm một lô thực phẩm vào kho (Giao dịch nguyên tử: Tạo/cập nhật Food, tạo Batch, ghi Movement)
+  /// Thêm một lô thực phẩm vào kho (Thực hiện Firestore WriteBatch nguyên tử)
   Future<void> addFoodBatch({
     required String userId,
     required String foodName,
@@ -159,9 +135,14 @@ class PantryRepository {
     required DateTime expiryDate,
     String? note,
   }) async {
+    final trimmedName = foodName.trim();
+    if (trimmedName.isEmpty) {
+      throw ArgumentError('Tên thực phẩm không được để trống.');
+    }
+
     if (_isMockUser(userId)) {
       _addMemoryBatch(
-        foodName: foodName,
+        foodName: trimmedName,
         categoryName: categoryName,
         baseUnit: baseUnit,
         locationName: locationName,
@@ -172,84 +153,80 @@ class PantryRepository {
       return;
     }
 
-    try {
-      await _firestore.runTransaction((txn) async {
-        // 1. Tìm hoặc tạo `thuc_pham`
-        final querySnap = await _userPantryRef(userId)
-            .where('ten_thuc_pham', isEqualTo: foodName.trim())
-            .limit(1)
-            .get();
+    // 1. Tìm thuc_pham hiện có ngoài transaction để tránh giới hạn Query trong transaction
+    final querySnap = await _userPantryRef(userId)
+        .where('ten_thuc_pham', isEqualTo: trimmedName)
+        .limit(1)
+        .get();
 
-        String foodId;
-        if (querySnap.docs.isNotEmpty) {
-          final foodDoc = querySnap.docs.first;
-          foodId = foodDoc.id;
-          final currentStock = (foodDoc.data()['so_luong_ton'] as num?)?.toDouble() ?? 0.0;
-          final newStock = currentStock + quantity;
+    final batch = _firestore.batch();
+    String foodId;
 
-          // Cập nhật ngày hết hạn gần nhất nếu lô mới có hạn sớm hơn
-          DateTime? closestExp;
-          final expStr = foodDoc.data()['han_su_dung_gan_nhat'] as String?;
-          if (expStr != null) {
-            closestExp = DateTime.tryParse(expStr);
-          }
-          if (closestExp == null || expiryDate.isBefore(closestExp)) {
-            closestExp = expiryDate;
-          }
+    if (querySnap.docs.isNotEmpty) {
+      final foodDoc = querySnap.docs.first;
+      foodId = foodDoc.id;
+      final currentStock = (foodDoc.data()['so_luong_ton'] as num?)?.toDouble() ?? 0.0;
+      final newStock = currentStock + quantity;
 
-          txn.update(foodDoc.reference, {
-            'so_luong_ton': newStock,
-            'han_su_dung_gan_nhat': closestExp.toIso8601String(),
-          });
-        } else {
-          final newFoodRef = _userPantryRef(userId).doc();
-          foodId = newFoodRef.id;
-          txn.set(newFoodRef, {
-            'ten_thuc_pham': foodName.trim(),
-            'loai_thuc_pham': categoryName,
-            'don_vi_chuan': baseUnit,
-            'so_luong_ton': quantity,
-            'muc_ton_toi_thieu': 1.0,
-            'han_su_dung_gan_nhat': expiryDate.toIso8601String(),
-            'ngay_tao': DateTime.now().toIso8601String(),
-          });
-        }
+      // Cập nhật ngày hết hạn gần nhất nếu lô mới có hạn sớm hơn
+      DateTime? closestExp;
+      final expStr = foodDoc.data()['han_su_dung_gan_nhat'] as String?;
+      if (expStr != null) {
+        closestExp = DateTime.tryParse(expStr);
+      }
+      if (closestExp == null || expiryDate.isBefore(closestExp)) {
+        closestExp = expiryDate;
+      }
 
-        // 2. Tạo `lo_thuc_pham` mới
-        final batchRef = _userBatchesRef(userId).doc();
-        txn.set(batchRef, {
-          'ma_thuc_pham': foodId,
-          'ten_thuc_pham': foodName.trim(),
-          'ten_vi_tri': locationName,
-          'ngay_nhap': DateTime.now().toIso8601String(),
-          'han_su_dung': expiryDate.toIso8601String(),
-          'so_luong_ton': quantity,
-          'don_vi': baseUnit,
-          'ghi_chu': note,
-        });
-
-        // 3. Ghi `bien_dong_kho` (loai = IN)
-        final movementRef = _userMovementsRef(userId).doc();
-        txn.set(movementRef, {
-          'ma_lo': batchRef.id,
-          'loai_bien_dong': 'IN',
-          'so_luong_nhap': quantity,
-          'so_luong_xuat': 0.0,
-          'thoi_diem': DateTime.now().toIso8601String(),
-          'ghi_chu': note ?? 'Nhập mới vào $locationName',
-        });
+      batch.update(foodDoc.reference, {
+        'so_luong_ton': newStock,
+        'han_su_dung_gan_nhat': closestExp.toIso8601String(),
+        'ten_danh_muc': categoryName,
+        'don_vi_co_so': baseUnit,
       });
-    } catch (_) {
-      _addMemoryBatch(
-        foodName: foodName,
-        categoryName: categoryName,
-        baseUnit: baseUnit,
-        locationName: locationName,
-        quantity: quantity,
-        expiryDate: expiryDate,
-        note: note,
-      );
+    } else {
+      final newFoodRef = _userPantryRef(userId).doc();
+      foodId = newFoodRef.id;
+      batch.set(newFoodRef, {
+        'ten_thuc_pham': trimmedName,
+        'ten_danh_muc': categoryName,
+        'loai_thuc_pham': categoryName,
+        'don_vi_co_so': baseUnit,
+        'don_vi_chuan': baseUnit,
+        'so_luong_ton': quantity,
+        'nguong_sap_het': 1.0,
+        'muc_ton_toi_thieu': 1.0,
+        'han_su_dung_gan_nhat': expiryDate.toIso8601String(),
+        'ngay_tao': DateTime.now().toIso8601String(),
+      });
     }
+
+    // 2. Tạo `lo_thuc_pham` mới
+    final batchRef = _userBatchesRef(userId).doc();
+    batch.set(batchRef, {
+      'ma_thuc_pham': foodId,
+      'ten_thuc_pham': trimmedName,
+      'ten_vi_tri': locationName,
+      'ngay_nhap': DateTime.now().toIso8601String(),
+      'han_su_dung': expiryDate.toIso8601String(),
+      'so_luong': quantity,
+      'so_luong_ton': quantity,
+      'don_vi': baseUnit,
+      if (note != null && note.isNotEmpty) 'ghi_chu': note,
+    });
+
+    // 3. Ghi `bien_dong_kho` (loai = IN)
+    final movementRef = _userMovementsRef(userId).doc();
+    batch.set(movementRef, {
+      'ma_lo': batchRef.id,
+      'loai_bien_dong': 'IN',
+      'so_luong_nhap': quantity,
+      'so_luong_xuat': 0.0,
+      'thoi_diem': DateTime.now().toIso8601String(),
+      'ghi_chu': note ?? 'Nhập mới vào $locationName',
+    });
+
+    await batch.commit();
   }
 
   // =========================================================================
@@ -290,50 +267,43 @@ class PantryRepository {
       return;
     }
 
-    try {
-      await _firestore.runTransaction((txn) async {
-        final batchRef = _userBatchesRef(userId).doc(batchId);
-        final batchDoc = await txn.get(batchRef);
-        if (!batchDoc.exists) return;
+    await _firestore.runTransaction((txn) async {
+      final batchRef = _userBatchesRef(userId).doc(batchId);
+      final batchDoc = await txn.get(batchRef);
+      if (!batchDoc.exists) return;
 
-        final data = batchDoc.data()!;
-        final foodId = data['ma_thuc_pham'] as String? ?? '';
-        final qty = (data['so_luong_ton'] as num?)?.toDouble() ??
-            (data['so_luong'] as num?)?.toDouble() ??
-            0.0;
+      final data = batchDoc.data()!;
+      final foodId = data['ma_thuc_pham'] as String? ?? '';
+      final qty = (data['so_luong_ton'] as num?)?.toDouble() ??
+          (data['so_luong'] as num?)?.toDouble() ??
+          0.0;
 
-        // 1. Giảm tồn kho FoodItem
-        if (foodId.isNotEmpty) {
-          final foodRef = _userPantryRef(userId).doc(foodId);
-          final foodDoc = await txn.get(foodRef);
-          if (foodDoc.exists) {
-            final cur = (foodDoc.data()?['so_luong_ton'] as num?)?.toDouble() ?? 0.0;
-            txn.update(foodRef, {
-              'so_luong_ton': (cur - qty).clamp(0.0, 999999.0),
-            });
-          }
+      // 1. Giảm tồn kho FoodItem
+      if (foodId.isNotEmpty) {
+        final foodRef = _userPantryRef(userId).doc(foodId);
+        final foodDoc = await txn.get(foodRef);
+        if (foodDoc.exists) {
+          final cur = (foodDoc.data()?['so_luong_ton'] as num?)?.toDouble() ?? 0.0;
+          txn.update(foodRef, {
+            'so_luong_ton': (cur - qty).clamp(0.0, 999999.0),
+          });
         }
+      }
 
-        // 2. Cập nhật lô về 0 hoặc xóa
-        txn.update(batchRef, {'so_luong_ton': 0.0, 'so_luong': 0.0});
+      // 2. Cập nhật lô về 0 hoặc xóa
+      txn.update(batchRef, {'so_luong_ton': 0.0, 'so_luong': 0.0});
 
-        // 3. Ghi biến động DISCARD
-        final movRef = _userMovementsRef(userId).doc();
-        txn.set(movRef, {
-          'ma_lo': batchId,
-          'loai_bien_dong': 'DISCARD',
-          'so_luong_nhap': 0.0,
-          'so_luong_xuat': qty,
-          'thoi_diem': DateTime.now().toIso8601String(),
-          'ghi_chu': reason,
-        });
+      // 3. Ghi biến động DISCARD
+      final movRef = _userMovementsRef(userId).doc();
+      txn.set(movRef, {
+        'ma_lo': batchId,
+        'loai_bien_dong': 'DISCARD',
+        'so_luong_nhap': 0.0,
+        'so_luong_xuat': qty,
+        'thoi_diem': DateTime.now().toIso8601String(),
+        'ghi_chu': reason,
       });
-    } catch (_) {
-      final batchIndex = _memoryBatches.indexWhere((b) => b.id == batchId);
-      if (batchIndex < 0) return;
-      final batch = _memoryBatches[batchIndex];
-      _memoryBatches.removeAt(batchIndex);
-    }
+    });
   }
 
   // =========================================================================
@@ -352,19 +322,10 @@ class PantryRepository {
         .orderBy('thoi_diem', descending: true)
         .snapshots()
         .map((snapshot) {
-      if (snapshot.docs.isEmpty) {
-        final list = List<StockMovement>.from(_memoryMovements);
-        list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-        return list;
-      }
       return snapshot.docs
           .map((doc) => StockMovement.fromMap(doc.id, doc.data()))
           .toList();
-    }).handleError((_) {
-      final list = List<StockMovement>.from(_memoryMovements);
-      list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-      return list;
-    });
+    }).handleError((_) => const <StockMovement>[]);
   }
 
   // =========================================================================
@@ -421,6 +382,7 @@ class PantryRepository {
     if (_isMockUser(userId)) return;
     try {
       await _userPantryRef(userId).doc(foodId).update({
+        'nguong_sap_het': minimumStock,
         'muc_ton_toi_thieu': minimumStock,
       });
     } catch (_) {

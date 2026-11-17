@@ -12,8 +12,7 @@ final pantryRepositoryProvider = Provider<PantryRepository>((ref) {
 
 /// UID người dùng (Firebase Auth UID hoặc mock user cho chế độ Local)
 final pantryUserIdProvider = Provider<String>((ref) {
-  final user = ref.watch(authStateProvider).value;
-  return user?.uid ?? 'mock_user_nguyen_van_dinh';
+  return ref.watch(currentUserIdProvider);
 });
 
 /// Filter danh mục thực phẩm

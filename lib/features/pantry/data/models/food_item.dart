@@ -92,11 +92,13 @@ class FoodItem {
     return FoodItem(
       id: id,
       name: map['ten_thuc_pham'] as String? ?? 'Chưa đặt tên',
-      categoryName: map['ten_danh_muc'] as String? ?? 'Khác',
-      baseUnit: map['don_vi_co_so'] as String? ?? 'phần',
+      categoryName: map['ten_danh_muc'] as String? ?? map['loai_thuc_pham'] as String? ?? 'Khác',
+      baseUnit: map['don_vi_co_so'] as String? ?? map['don_vi_chuan'] as String? ?? 'phần',
       barcode: map['ma_vach'] as String?,
       imageUrl: map['hinh_anh'] as String?,
-      minimumStock: (map['nguong_sap_het'] as num?)?.toDouble() ?? 1.0,
+      minimumStock: (map['nguong_sap_het'] as num?)?.toDouble() ??
+          (map['muc_ton_toi_thieu'] as num?)?.toDouble() ??
+          1.0,
       totalStock: (map['so_luong_ton'] as num?)?.toDouble() ?? 0.0,
       closestExpiryDate: map['han_su_dung_gan_nhat'] != null
           ? DateTime.tryParse(map['han_su_dung_gan_nhat'] as String)

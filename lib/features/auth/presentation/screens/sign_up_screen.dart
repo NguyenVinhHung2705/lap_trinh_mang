@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../shared/theme/app_colors.dart';
 import '../providers/auth_providers.dart';
 import '../widgets/auth_scaffold.dart';
 import 'auth_gate_screen.dart';
@@ -114,6 +115,48 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
             const SizedBox(height: 24),
             AuthPrimaryButton(
                 label: 'Đăng ký', onPressed: _register, loading: _loading),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(child: Divider(color: AppColors.border)),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(
+                    'HOẶC',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                Expanded(child: Divider(color: AppColors.border)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                side: const BorderSide(color: AppColors.primary, width: 1.5),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                backgroundColor: AppColors.primaryTint,
+              ),
+              icon: const Icon(Icons.offline_pin_outlined, color: AppColors.primary),
+              label: const Text(
+                'Dùng tài khoản Local (Dùng thử)',
+                style: TextStyle(
+                  color: AppColors.primary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+              onPressed: () {
+                ref.read(isLocalModeProvider.notifier).state = true;
+                Navigator.of(context).pop(); // Quay về màn hình chính
+              },
+            ),
           ],
         ),
       ),

@@ -16,6 +16,7 @@ class _AddBatchScreenState extends ConsumerState<AddBatchScreen> {
   final _quantityController = TextEditingController();
   final _unitController = TextEditingController(text: 'kg');
 
+  bool _isSubmitting = false;
   String _selectedCategory = 'Rau củ';
   String _selectedLocation = 'Ngăn mát tủ lạnh';
   DateTime _selectedExpiryDate = DateTime.now().add(const Duration(days: 7));
@@ -62,30 +63,49 @@ class _AddBatchScreenState extends ConsumerState<AddBatchScreen> {
     }
   }
 
-  void _submit() {
-    if (!_formKey.currentState!.validate()) return;
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate() || _isSubmitting) return;
 
-    final repo = ref.read(pantryRepositoryProvider);
-    final quantity = double.tryParse(_quantityController.text) ?? 1.0;
+    setState(() => _isSubmitting = true);
 
-    repo.addFoodBatch(
-      userId: ref.read(pantryUserIdProvider),
-      foodName: _nameController.text.trim(),
-      categoryName: _selectedCategory,
-      baseUnit: _unitController.text.trim(),
-      locationName: _selectedLocation,
-      quantity: quantity,
-      expiryDate: _selectedExpiryDate,
-    );
+    try {
+      final repo = ref.read(pantryRepositoryProvider);
+      final userId = ref.read(pantryUserIdProvider);
+      final quantity = double.tryParse(_quantityController.text.trim()) ?? 1.0;
+      final foodName = _nameController.text.trim();
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: AppColors.primary,
-        content: Text('Đã nhập lô "${_nameController.text.trim()}" vào kho thành công!'),
-      ),
-    );
+      await repo.addFoodBatch(
+        userId: userId,
+        foodName: foodName,
+        categoryName: _selectedCategory,
+        baseUnit: _unitController.text.trim().isEmpty ? 'phần' : _unitController.text.trim(),
+        locationName: _selectedLocation,
+        quantity: quantity,
+        expiryDate: _selectedExpiryDate,
+      );
 
-    Navigator.of(context).pop();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.primary,
+          content: Text('Đã nhập lô "$foodName" vào kho thành công!'),
+        ),
+      );
+
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.statusDanger,
+          content: Text('Lỗi khi thêm thực phẩm: $e'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
   }
 
   @override
@@ -232,13 +252,23 @@ class _AddBatchScreenState extends ConsumerState<AddBatchScreen> {
             SizedBox(
               height: 48,
               child: ElevatedButton(
-                onPressed: _submit,
+                onPressed: _isSubmitting ? null : _submit,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
+                  disabledBackgroundColor: AppColors.primary.withOpacity(0.6),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                child: const Text('Lưu vào kho', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                child: _isSubmitting
+                    ? const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text('Lưu vào kho', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
           ],
