@@ -176,7 +176,7 @@ class FirestoreRecipeCatalogReader implements RecipeCatalogReader {
               lowerQuery.isEmpty ||
               recipe.name.toLowerCase().contains(lowerQuery),
         )
-        .map((r) => RecipeSummary(
+        .map<RecipeSummary>((r) => RecipeSummary(
               id: r.id,
               authorId: r.authorId,
               name: r.name,
@@ -211,10 +211,10 @@ class FirestoreRecipeCatalogReader implements RecipeCatalogReader {
     final ingredients = RecipeMockData.initialIngredients[recipeId];
     if (ingredients != null) {
       return ingredients
-          .map((i) => RecipeIngredientDto(
+          .map<RecipeIngredientDto>((i) => RecipeIngredientDto(
                 foodId: i.foodId,
-                unitId: i.unit,
-                quantity: i.amount,
+                unitId: i.unitId,
+                quantity: i.baseQuantity,
               ))
           .toList();
     }
@@ -258,11 +258,9 @@ class FirestoreFoodCatalogReader implements FoodCatalogReader {
         );
     if (mock != null) {
       return FoodSummary(
-        id: mock.id,
-        name: mock.name,
-        baseUnitId: mock.defaultUnit,
-        baseUnitName: mock.defaultUnit,
-        isPerishable: mock.shelfLifeDays > 0,
+        id: mock.id as String,
+        name: mock.name as String,
+        baseUnitId: mock.defaultUnit as String,
       );
     }
     return null;
@@ -291,12 +289,10 @@ class FirestoreFoodCatalogReader implements FoodCatalogReader {
               lowerQuery.isEmpty ||
               food.name.toLowerCase().contains(lowerQuery),
         )
-        .map((f) => FoodSummary(
+        .map<FoodSummary>((f) => FoodSummary(
               id: f.id,
               name: f.name,
               baseUnitId: f.defaultUnit,
-              baseUnitName: f.defaultUnit,
-              isPerishable: f.shelfLifeDays > 0,
             ))
         .toList();
   }
