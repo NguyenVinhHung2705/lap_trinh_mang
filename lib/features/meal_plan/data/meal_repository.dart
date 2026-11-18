@@ -305,10 +305,34 @@ class MealRepository {
     final mealRef = _mealDoc(userId, item.mealId);
     final itemRef = _itemsRef(userId, item.mealId).doc(itemId);
 
-    await _firestore.runTransaction((txn) async {
-      await _requirePlannedMealInTxn(txn, mealRef);
-      txn.set(itemRef, persistedItem.toMap());
-    });
+    try {
+      await _firestore.runTransaction((txn) async {
+        final snap = await txn.get(mealRef);
+        if (!snap.exists || snap.data() == null) {
+          // Meal chưa được ghi lên Firestore (do fallback in-memory trước đó)
+          // → tự tạo meal doc trong cùng transaction rồi mới add item
+          final memMeal = _memoryMeals.cast<Meal?>().firstWhere(
+                (m) => m?.id == item.mealId,
+                orElse: () => null,
+              );
+          if (memMeal != null) {
+            txn.set(mealRef, memMeal.toMap());
+          } else {
+            throw const MealNotFoundException();
+          }
+        } else {
+          final existing = _mealFromDoc(snap);
+          if (existing.isCompleted) throw const MealAlreadyCompletedException();
+          if (existing.isCancelled) {
+            throw const MealPlanException('Bữa ăn đã bị hủy, không thể thêm món.');
+          }
+        }
+        txn.set(itemRef, persistedItem.toMap());
+      });
+    } on FirebaseException {
+      // Firestore lỗi (Rules chưa deploy, offline...) → vẫn trả item in-memory
+      return persistedItem;
+    }
 
     return persistedItem;
   }
@@ -335,14 +359,16 @@ class MealRepository {
     final mealRef = _mealDoc(userId, mealId);
     final itemRef = _itemsRef(userId, mealId).doc(itemId);
 
-    await _firestore.runTransaction((txn) async {
-      await _requirePlannedMealInTxn(txn, mealRef);
-      final itemSnap = await txn.get(itemRef);
-      if (!itemSnap.exists) {
-        throw const MealNotFoundException();
-      }
-      txn.update(itemRef, {'so_luong': quantity});
-    });
+    try {
+      await _firestore.runTransaction((txn) async {
+        await _requirePlannedMealInTxn(txn, mealRef);
+        final itemSnap = await txn.get(itemRef);
+        if (!itemSnap.exists) return; // item chỉ có in-memory, bỏ qua
+        txn.update(itemRef, {'so_luong': quantity});
+      });
+    } on FirebaseException {
+      return; // Firestore lỗi → memory đã cập nhật, không throw
+    }
   }
 
   /// Removes a single item from a `PLANNED` meal (`MOD-04-05`).
@@ -358,14 +384,16 @@ class MealRepository {
     final mealRef = _mealDoc(userId, mealId);
     final itemRef = _itemsRef(userId, mealId).doc(itemId);
 
-    await _firestore.runTransaction((txn) async {
-      await _requirePlannedMealInTxn(txn, mealRef);
-      final itemSnap = await txn.get(itemRef);
-      if (!itemSnap.exists) {
-        throw const MealNotFoundException();
-      }
-      txn.delete(itemRef);
-    });
+    try {
+      await _firestore.runTransaction((txn) async {
+        await _requirePlannedMealInTxn(txn, mealRef);
+        final itemSnap = await txn.get(itemRef);
+        if (!itemSnap.exists) return; // item chỉ có in-memory, bỏ qua
+        txn.delete(itemRef);
+      });
+    } on FirebaseException {
+      return; // Firestore lỗi → memory đã xoá, không throw
+    }
   }
 
   /// Moves a `PLANNED` meal and its items to a new `(newDate, newSlot)` (`MOD-04-05`).
@@ -444,13 +472,17 @@ class MealRepository {
 
     final mealRef = _mealDoc(userId, mealId);
 
-    await _firestore.runTransaction((txn) async {
-      await _requirePlannedMealInTxn(txn, mealRef);
-      txn.update(mealRef, {
-        'trang_thai': MealStatus.cancelled.value,
-        'gio_nhac': null,
+    try {
+      await _firestore.runTransaction((txn) async {
+        await _requirePlannedMealInTxn(txn, mealRef);
+        txn.update(mealRef, {
+          'trang_thai': MealStatus.cancelled.value,
+          'gio_nhac': null,
+        });
       });
-    });
+    } on FirebaseException {
+      return; // in-memory đã cập nhật
+    }
   }
 
   /// Marks a meal as completed (`MOD-04-08`).
@@ -492,12 +524,16 @@ class MealRepository {
 
     final mealRef = _mealDoc(userId, mealId);
 
-    await _firestore.runTransaction((txn) async {
-      await _requirePlannedMealInTxn(txn, mealRef);
-      txn.update(mealRef, {
-        'gio_nhac': reminderAt?.toIso8601String(),
+    try {
+      await _firestore.runTransaction((txn) async {
+        await _requirePlannedMealInTxn(txn, mealRef);
+        txn.update(mealRef, {
+          'gio_nhac': reminderAt?.toIso8601String(),
+        });
       });
-    });
+    } on FirebaseException {
+      return; // in-memory đã cập nhật
+    }
   }
 
   /// Ensures the target meal exists and is still `PLANNED` before any mutation.
