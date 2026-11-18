@@ -13,4 +13,3 @@ appId: com.example.smart_food_life
 # Tìm kiếm
 - tapOn: "Tìm món ăn hoặc nguyên liệu..."
 - inputText: "Trứng"
-- clearText

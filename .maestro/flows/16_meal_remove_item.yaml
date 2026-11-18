@@ -2,9 +2,7 @@ appId: com.example.smart_food_life
 ---
 # MOD-04 | TC-MEAL-08: Bỏ món khỏi bữa
 - runFlow: 10_meal_add_dish_recipe.yaml
-- tapOn:
-    description: "Bỏ món"
-    index: 0
+- tapOn: "Bỏ món"
 - assertVisible: "Bỏ món"
 - tapOn: "Bỏ món"
 - assertNotVisible: "Trứng"

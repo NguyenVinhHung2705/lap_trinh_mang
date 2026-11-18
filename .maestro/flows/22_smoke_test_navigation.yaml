@@ -54,8 +54,7 @@ appId: com.example.smart_food_life
 - assertVisible: "Tổng quan hôm nay"
 
 # 7. MOD-05 Profile
-- tapOn:
-    description: "Tài khoản"
+- tapOn: "Tài khoản"
 - assertVisible: "Tài khoản"
 - assertVisible: "Đăng nhập bằng Firebase"
 - tapOn:
