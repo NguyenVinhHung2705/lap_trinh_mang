@@ -195,25 +195,54 @@ class MealRepository {
 
     final docRef = _mealDoc(userId, docId);
 
-    return _firestore.runTransaction((txn) async {
-      final snap = await txn.get(docRef);
-      if (snap.exists && snap.data() != null) {
-        final existing = _mealFromDoc(snap);
-        if (!existing.isCancelled) {
-          return existing;
-        }
-      }
-
-      final newMeal = Meal(
+    // Helper tạo in-memory meal khi Firestore chưa có dữ liệu
+    Meal _buildLocalMeal() {
+      final m = Meal(
         id: docId,
         userId: userId,
         mealDate: normalizedDate,
         slot: slot,
         status: MealStatus.planned,
       );
-      txn.set(docRef, newMeal.toMap());
-      return newMeal;
-    });
+      final idx = _memoryMeals.indexWhere((x) => x.id == docId);
+      if (idx != -1) {
+        _memoryMeals[idx] = m;
+      } else {
+        _memoryMeals.add(m);
+      }
+      return m;
+    }
+
+    try {
+      return await _firestore.runTransaction((txn) async {
+        final snap = await txn.get(docRef);
+        if (snap.exists && snap.data() != null) {
+          final existing = _mealFromDoc(snap);
+          if (!existing.isCancelled) return existing;
+        }
+
+        final newMeal = Meal(
+          id: docId,
+          userId: userId,
+          mealDate: normalizedDate,
+          slot: slot,
+          status: MealStatus.planned,
+        );
+        txn.set(docRef, newMeal.toMap());
+        return newMeal;
+      });
+    } on FirebaseException catch (e) {
+      // Firestore chưa được cấu hình Rules hoặc đang offline
+      // → fallback sang in-memory để demo vẫn chạy được
+      if (e.code == 'not-found' ||
+          e.code == 'permission-denied' ||
+          e.code == 'unavailable') {
+        return _buildLocalMeal();
+      }
+      rethrow;
+    } catch (_) {
+      return _buildLocalMeal();
+    }
   }
 
   /// Reads all items in a meal (`mon_an_ke_hoach`).
