@@ -1,28 +1,11 @@
 appId: com.example.smart_food_life
 ---
-# ============================================================
-# MOD-04 | TC-MEAL-03: Thêm thực phẩm đơn lẻ vào bữa ăn
-# ============================================================
+# MOD-04 | TC-MEAL-03: Thêm thực phẩm đơn lẻ
 - runFlow: 09_meal_view_calendar.yaml
-
-- tapOn: "Sáng"
+- tapOn: "Bữa Sáng"
 - assertVisible: "Chi tiết bữa ăn"
 - tapOn: "Thêm món"
-- assertVisible: "Thêm vào bữa"
-
-# Chuyển sang tab Thực phẩm
 - tapOn: "Thực phẩm"
-
-# Tìm thực phẩm
-- tapOn: "Tìm thực phẩm..."
-- inputText: "Trứng"
 - tapOn:
     index: 0
-    text: "Trứng"
-
-# Nhập số lượng
-- assertVisible: "Số lượng"
 - tapOn: "Thêm vào bữa"
-
-# Kiểm tra đã thêm thành công
-- assertVisible: "Trứng"

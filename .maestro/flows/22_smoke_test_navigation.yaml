@@ -1,55 +1,63 @@
 appId: com.example.smart_food_life
 ---
-# ============================================================
-# TC-REGRESSION-01: Smoke test toàn bộ navigation chính
-# Chạy trước mỗi demo để đảm bảo app không crash cơ bản
-# ============================================================
+# TC-REGRESSION-01: Smoke test toàn bộ navigation — chạy trước mỗi demo
 - launchApp:
     clearState: true
 
-# Auth
+# 1. Đăng nhập
 - assertVisible: "Đăng nhập"
 - tapOn: "Dùng tài khoản Local (Dùng thử)"
 - assertVisible: "Tổng quan hôm nay"
 
-# Home dashboard cards
-- assertVisible: "Kho thực phẩm"
-- assertVisible: "Sắp hết hạn"
-- assertVisible: "Mua sắm"
-- assertVisible: "Bữa ăn hôm nay"
-
-# Quick actions
+# 2. Kiểm tra Home
+- assertVisible: "Tổng quan hôm nay"
+- assertVisible: "Thao tác nhanh"
 - assertVisible: "Thêm kho"
 - assertVisible: "Tạo DS mua"
 - assertVisible: "Tạo món"
 - assertVisible: "Lên lịch"
 
-# Vào từng module và quay lại
+# 3. MOD-01 Kho
 - tapOn: "Thêm kho"
 - assertVisible: "Nhập kho"
 - tapOn:
     point: "5%,5%"
+- assertVisible: "Tổng quan hôm nay"
 
+# 4. MOD-02 Mua sắm
 - tapOn: "Tạo DS mua"
-- assertVisible: "Danh sách mua sắm"
+- assertVisible: "Tạo danh sách mới"
 - tapOn:
     point: "5%,5%"
+- assertVisible: "Tổng quan hôm nay"
 
+# 5. MOD-03 Công thức
 - tapOn: "Tạo món"
 - assertVisible: "Tìm món ăn hoặc nguyên liệu..."
 - tapOn:
     point: "5%,5%"
+- assertVisible: "Tổng quan hôm nay"
 
+# 6. MOD-04 Kế hoạch bữa ăn
 - tapOn: "Lên lịch"
+- assertVisible: "Kế hoạch bữa ăn"
+- assertVisible: "T2"
+- assertVisible: "CN"
+- tapOn: "Bữa Sáng"
+- assertVisible: "Chi tiết bữa ăn"
+- assertVisible: "Thêm món"
+- tapOn:
+    point: "5%,5%"
 - assertVisible: "Kế hoạch bữa ăn"
 - tapOn:
     point: "5%,5%"
+- assertVisible: "Tổng quan hôm nay"
 
-# Profile
+# 7. MOD-05 Profile
 - tapOn:
     description: "Tài khoản"
 - assertVisible: "Tài khoản"
+- assertVisible: "Đăng nhập bằng Firebase"
 - tapOn:
     point: "5%,5%"
-
 - assertVisible: "Tổng quan hôm nay"

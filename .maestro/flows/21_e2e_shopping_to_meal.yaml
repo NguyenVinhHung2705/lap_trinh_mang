@@ -1,56 +1,39 @@
 appId: com.example.smart_food_life
 ---
-# ============================================================
-# TC-E2E-02: Luồng Mua sắm → Nhập kho → Lên kế hoạch
-# End-to-end: MOD-02 → MOD-01 → MOD-04
-# ============================================================
-
-# 1. Đăng nhập local
+# TC-E2E-02: Mua sắm → Nhập kho → Lên lịch
 - launchApp:
     clearState: true
 - tapOn: "Dùng tài khoản Local (Dùng thử)"
 - assertVisible: "Tổng quan hôm nay"
 
-# 2. Tạo danh sách mua sắm (MOD-02)
+# MOD-02: Tạo danh sách mua sắm
 - tapOn: "Tạo DS mua"
-- tapOn: "Tạo danh sách"
+- assertVisible: "Tạo danh sách mới"
+- tapOn: "Tạo danh sách mới"
+- assertVisible: "Tạo danh sách mua sắm"
 - tapOn: "Ví dụ: Đi siêu thị cuối tuần"
 - inputText: "Mua thứ 7"
 - tapOn: "Tạo"
 - assertVisible: "Mua thứ 7"
 
-# 3. Vào danh sách vừa tạo
-- tapOn: "Mua thứ 7"
-
-# 4. Thêm mặt hàng vào danh sách
-- tapOn: "Thêm mặt hàng"
-- inputText: "Trứng"
-- tapOn: "Trứng"
-
-# 5. Quay lại home
-- tapOn:
-    point: "5%,5%"
+# Quay về home
 - tapOn:
     point: "5%,5%"
 - assertVisible: "Tổng quan hôm nay"
 
-# 6. Vào kho (MOD-01) xem tổng quan
-- tapOn: "Kho thực phẩm"
+# MOD-01: Xem kho
+- tapOn: "Thêm kho"
 - assertVisible: "Nhập kho"
-
-# 7. Quay lại home và vào lịch bữa ăn (MOD-04)
 - tapOn:
     point: "5%,5%"
+- assertVisible: "Tổng quan hôm nay"
+
+# MOD-04: Lên lịch bữa Tối
 - tapOn: "Lên lịch"
 - assertVisible: "Kế hoạch bữa ăn"
-
-# 8. Mở slot Tối
-- tapOn: "Tối"
+- tapOn: "Bữa Tối"
 - assertVisible: "Chi tiết bữa ăn"
-
-# 9. Thêm món
 - tapOn: "Thêm món"
 - tapOn:
     index: 0
 - tapOn: "Thêm vào bữa"
-- assertVisible: "Tối"

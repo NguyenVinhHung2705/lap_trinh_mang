@@ -1,25 +1,16 @@
 appId: com.example.smart_food_life
 ---
-# ============================================================
-# MOD-04 | TC-MEAL-09: Điều hướng tuần trên lịch
-# ============================================================
+# MOD-04 | TC-MEAL-09: Điều hướng lịch tuần
 - runFlow: 00_helpers.yaml
 - tapOn: "Lên lịch"
 - assertVisible: "Kế hoạch bữa ăn"
-
-# Chuyển sang tuần trước
 - tapOn:
     description: "Kỳ trước"
 - assertVisible: "Kế hoạch bữa ăn"
-
-# Chuyển sang tuần sau (về hiện tại)
 - tapOn:
     description: "Kỳ sau"
-
-# Đổi ngày xem từ header lịch
+# "Đổi ngày" là label của button thay đổi ngày (từ code: 'Đổi ngày')
 - tapOn: "Đổi ngày"
 - assertVisible: "Chọn ngày"
-
-# Xác nhận ngày mặc định
 - tapOn: "OK"
 - assertVisible: "Kế hoạch bữa ăn"

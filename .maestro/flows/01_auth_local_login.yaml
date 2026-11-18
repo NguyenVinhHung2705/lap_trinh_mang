@@ -1,19 +1,13 @@
 appId: com.example.smart_food_life
 ---
-# ============================================================
 # MOD-05 | TC-AUTH-01: Đăng nhập bằng tài khoản Local
-# ============================================================
 - launchApp:
     clearState: true
-
-# Màn hình đăng nhập phải hiện ra
 - assertVisible: "Đăng nhập"
 - assertVisible: "Chào mừng trở lại"
-
-# Bước: Đăng nhập local (không cần Firebase)
 - tapOn: "Dùng tài khoản Local (Dùng thử)"
-
-# Kỳ vọng: vào được Home
+# Home dashboard
 - assertVisible: "Tổng quan hôm nay"
-- assertVisible: "Kho thực phẩm"
-- assertVisible: "Bữa ăn hôm nay"
+- assertVisible: "Thao tác nhanh"
+- assertVisible: "Thêm kho"
+- assertVisible: "Lên lịch"

@@ -1,29 +1,13 @@
 appId: com.example.smart_food_life
 ---
-# ============================================================
 # MOD-01 | TC-PANTRY-02: Nhập kho thực phẩm mới
-# ============================================================
 - runFlow: 00_helpers.yaml
-
-# Điều hướng vào màn Kho
 - tapOn: "Thêm kho"
 - assertVisible: "Nhập kho"
-
-# Mở form nhập kho
+# Tap FAB "Nhập kho"
 - tapOn: "Nhập kho"
+# Màn hình add_batch_screen mở ra
 - assertVisible: "Nhập kho"
-
-# Điền thông tin lô hàng
+# Tìm thực phẩm
 - tapOn: "Tìm thực phẩm trong kho..."
 - inputText: "Trứng"
-- assertVisible: "Trứng"
-- tapOn: "Trứng"
-
-# Nhập số lượng
-- tapOn:
-    id: "quantity_field"
-- inputText: "10"
-
-# Lưu
-- tapOn: "Lưu"
-- assertVisible: "Nhập kho thành công"

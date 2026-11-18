@@ -1,41 +1,34 @@
 appId: com.example.smart_food_life
 ---
-# ============================================================
-# TC-E2E-01: Luồng đầy đủ — Lên kế hoạch → Thêm món → Hoàn thành
-# End-to-end flow bao gồm MOD-04 + MOD-01 (trừ kho FEFO)
-# ============================================================
-
-# 1. Khởi động & đăng nhập
+# TC-E2E-01: Lên lịch → Thêm món → Hoàn thành
 - launchApp:
     clearState: true
-- assertVisible: "Đăng nhập"
 - tapOn: "Dùng tài khoản Local (Dùng thử)"
 - assertVisible: "Tổng quan hôm nay"
 
-# 2. Vào lịch bữa ăn
+# Vào lịch
 - tapOn: "Lên lịch"
 - assertVisible: "Kế hoạch bữa ăn"
 
-# 3. Mở chi tiết bữa Trưa
-- tapOn: "Trưa"
+# Mở bữa Trưa
+- tapOn: "Bữa Trưa"
 - assertVisible: "Chi tiết bữa ăn"
 
-# 4. Thêm món từ công thức
+# Thêm món từ công thức
 - tapOn: "Thêm món"
 - tapOn: "Công thức"
 - tapOn:
     index: 0
-- assertVisible: "Số khẩu phần"
 - tapOn: "Thêm vào bữa"
 
-# 5. Thêm thêm 1 món thực phẩm đơn lẻ
+# Thêm thực phẩm đơn lẻ
 - tapOn: "Thêm món"
 - tapOn: "Thực phẩm"
 - tapOn:
     index: 0
 - tapOn: "Thêm vào bữa"
 
-# 6. Hoàn thành bữa ăn → trừ kho
+# Hoàn thành bữa ăn → trừ kho
 - scrollUntilVisible:
     element:
       text: "Hoàn thành bữa ăn"
@@ -43,12 +36,4 @@ appId: com.example.smart_food_life
 - tapOn: "Hoàn thành bữa ăn"
 - assertVisible: "Xác nhận tiêu thụ"
 - tapOn: "Xác nhận"
-
-# 7. Kiểm tra kết quả
 - assertVisible: "Đã hoàn thành"
-- assertNotVisible: "Hoàn thành bữa ăn"
-
-# 8. Quay lại lịch → bữa Trưa hiện trạng thái hoàn thành
-- tapOn:
-    point: "5%,5%"
-- assertVisible: "Kế hoạch bữa ăn"

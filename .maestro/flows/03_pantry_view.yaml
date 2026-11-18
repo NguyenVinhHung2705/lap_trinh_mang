@@ -1,16 +1,10 @@
 appId: com.example.smart_food_life
 ---
-# ============================================================
 # MOD-01 | TC-PANTRY-01: Xem kho thực phẩm
-# ============================================================
 - runFlow: 00_helpers.yaml
-
-# Vào kho qua Quick Action
+# FAB label là "Nhập kho" (ở pantry screen) nhưng quick action từ home là "Thêm kho"
 - tapOn: "Thêm kho"
+# Vào pantry screen — FAB hiện "Nhập kho"
 - assertVisible: "Nhập kho"
-
-# Hoặc điều hướng từ overview card
-- tapOn:
-    point: "5%,5%"
-- tapOn: "Kho thực phẩm"
-- assertVisible: "Nhập kho"
+# Thanh tìm kiếm
+- assertVisible: "Tìm thực phẩm trong kho..."
