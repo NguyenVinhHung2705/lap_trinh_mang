@@ -1,0 +1,20 @@
+appId: com.example.smart_food_life
+---
+# ============================================================
+# MOD-03 | TC-RECIPE-02: Tạo công thức mới
+# ============================================================
+- runFlow: 00_helpers.yaml
+- tapOn: "Tạo món"
+
+# Mở form tạo công thức
+- tapOn: "Tạo công thức"
+- assertVisible: "Công thức mới"
+
+# Điền tên
+- tapOn:
+    id: "recipe_name_field"
+- inputText: "Trứng chiên cà chua"
+
+# Lưu
+- tapOn: "Lưu"
+- assertVisible: "Trứng chiên cà chua"

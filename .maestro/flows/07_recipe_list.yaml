@@ -1,0 +1,24 @@
+appId: com.example.smart_food_life
+---
+# ============================================================
+# MOD-03 | TC-RECIPE-01: Xem danh sách công thức
+# ============================================================
+- runFlow: 00_helpers.yaml
+
+# Vào Recipe qua Quick Action
+- tapOn: "Tạo món"
+- assertVisible: "Tìm món ăn hoặc nguyên liệu..."
+
+# Kiểm tra tab filter
+- assertVisible: "Tất cả"
+- assertVisible: "Của tôi"
+- assertVisible: "Hệ thống"
+- assertVisible: "Đã lưu"
+
+# Tìm kiếm công thức
+- tapOn: "Tìm món ăn hoặc nguyên liệu..."
+- inputText: "Trứng"
+- assertVisible: "Trứng"
+
+# Xóa tìm kiếm
+- clearText

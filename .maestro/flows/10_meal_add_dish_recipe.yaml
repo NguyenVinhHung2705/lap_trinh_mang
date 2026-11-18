@@ -1,0 +1,35 @@
+appId: com.example.smart_food_life
+---
+# ============================================================
+# MOD-04 | TC-MEAL-02: Thêm món từ công thức vào bữa ăn
+# ============================================================
+- runFlow: 09_meal_view_calendar.yaml
+
+# Vào chi tiết bữa Sáng
+- tapOn: "Sáng"
+- assertVisible: "Chi tiết bữa ăn"
+
+# Tap nút Thêm món (FAB)
+- tapOn: "Thêm món"
+- assertVisible: "Thêm vào bữa"
+
+# Chọn tab Công thức
+- tapOn: "Công thức"
+
+# Tìm công thức
+- tapOn: "Tìm công thức..."
+- inputText: "Trứng"
+
+# Chọn công thức đầu tiên tìm được
+- tapOn:
+    index: 0
+    text: "Trứng"
+
+# Dialog chọn số khẩu phần
+- assertVisible: "Số khẩu phần"
+
+# Xác nhận thêm
+- tapOn: "Thêm vào bữa"
+
+# Món phải xuất hiện trong danh sách
+- assertVisible: "Trứng"

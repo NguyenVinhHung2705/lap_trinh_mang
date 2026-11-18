@@ -1,0 +1,26 @@
+appId: com.example.smart_food_life
+---
+# ============================================================
+# MOD-04 | TC-MEAL-01: Mở lịch bữa ăn và xem chi tiết bữa
+# ============================================================
+- runFlow: 00_helpers.yaml
+
+# Vào Meal Plan qua Quick Action
+- tapOn: "Lên lịch"
+- assertVisible: "Kế hoạch bữa ăn"
+
+# Màn hình lịch phải hiện lịch tuần
+- assertVisible: "T2"
+
+# Tap vào slot Sáng để xem chi tiết
+- tapOn: "Sáng"
+- assertVisible: "Chi tiết bữa ăn"
+- assertVisible: "Sáng"
+
+# Nút thêm món phải hiện ra
+- assertVisible: "Thêm món"
+
+# Quay lại lịch
+- tapOn:
+    point: "5%,5%"
+- assertVisible: "Kế hoạch bữa ăn"

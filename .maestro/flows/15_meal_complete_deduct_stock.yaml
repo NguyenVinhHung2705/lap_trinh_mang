@@ -1,0 +1,31 @@
+appId: com.example.smart_food_life
+---
+# ============================================================
+# MOD-04 | TC-MEAL-07: Hoàn thành bữa ăn → trừ kho (FEFO)
+# Đây là luồng quan trọng nhất của MOD-04
+# ============================================================
+- runFlow: 10_meal_add_dish_recipe.yaml
+# Lúc này đang ở chi tiết bữa Sáng, đã có ít nhất 1 món
+
+# Nhấn nút "Hoàn thành bữa ăn" (FAB dưới cùng)
+- scrollUntilVisible:
+    element:
+      text: "Hoàn thành bữa ăn"
+    direction: DOWN
+- tapOn: "Hoàn thành bữa ăn"
+
+# Màn hình xác nhận tiêu thụ hiện ra
+- assertVisible: "Xác nhận tiêu thụ"
+- assertVisible: "Nguyên liệu sẽ được trừ"
+
+# Kiểm tra danh sách nguyên liệu hiện đúng
+- assertVisible: "Trứng"
+
+# Xác nhận hoàn thành → trừ kho
+- tapOn: "Xác nhận"
+
+# Trạng thái bữa ăn chuyển sang Đã hoàn thành
+- assertVisible: "Đã hoàn thành"
+
+# Nút Hoàn thành không còn hiển thị nữa
+- assertNotVisible: "Hoàn thành bữa ăn"

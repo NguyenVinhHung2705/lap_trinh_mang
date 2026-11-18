@@ -1,0 +1,23 @@
+appId: com.example.smart_food_life
+---
+# ============================================================
+# MOD-05 | TC-PROFILE-01: Xem và chỉnh sửa hồ sơ cá nhân
+# ============================================================
+- runFlow: 00_helpers.yaml
+
+# Mở profile từ avatar góc phải trên header
+- tapOn:
+    description: "Tài khoản"
+- assertVisible: "Tài khoản"
+
+# Màn hình profile hiện thông tin user local
+- assertVisible: "Đăng nhập bằng Firebase"
+- assertVisible: "Đăng ký tài khoản mới"
+
+# Thoát local mode → xem thử
+- assertVisible: "Thoát chế độ Local"
+
+# Quay lại
+- tapOn:
+    point: "5%,5%"
+- assertVisible: "Tổng quan hôm nay"

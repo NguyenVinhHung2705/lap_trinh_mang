@@ -1,0 +1,18 @@
+appId: com.example.smart_food_life
+---
+# ============================================================
+# MOD-04 | TC-MEAL-05: Đặt nhắc nhở chuẩn bị bữa ăn
+# ============================================================
+- runFlow: 09_meal_view_calendar.yaml
+
+- tapOn: "Sáng"
+- assertVisible: "Chi tiết bữa ăn"
+
+# Tap icon nhắc nhở (bell)
+- tapOn:
+    description: "Nhắc chuẩn bị bữa ăn"
+- assertVisible: "Nhắc nhở"
+
+# Hủy để không thay đổi trạng thái
+- tapOn: "Hủy"
+- assertVisible: "Chi tiết bữa ăn"

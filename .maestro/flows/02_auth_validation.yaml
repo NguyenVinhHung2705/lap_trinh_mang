@@ -1,0 +1,36 @@
+appId: com.example.smart_food_life
+---
+# ============================================================
+# MOD-05 | TC-AUTH-02: Đăng ký → Đăng nhập Firebase
+# ============================================================
+- launchApp:
+    clearState: true
+- assertVisible: "Đăng nhập"
+
+# Điền email & mật khẩu không hợp lệ → kiểm tra validation
+- tapOn: "Email"
+- inputText: "khong-phai-email"
+- tapOn: "Đăng nhập"
+- assertVisible: "Email chưa đúng định dạng."
+
+# Sửa lại email đúng, để mật khẩu trống → kiểm tra validation
+- clearText
+- tapOn: "Email"
+- inputText: "test@example.com"
+- tapOn: "Đăng nhập"
+- assertVisible: "Nhập mật khẩu."
+
+# Chuyển sang trang đăng ký
+- tapOn: "Chưa có tài khoản? Đăng ký"
+- assertVisible: "Đăng ký"
+
+# Quay lại
+- tapOn:
+    point: "5%,5%"
+- assertVisible: "Đăng nhập"
+
+# Quên mật khẩu
+- tapOn: "Quên mật khẩu?"
+- assertVisible: "Quên mật khẩu"
+- tapOn:
+    point: "5%,5%"

@@ -1,0 +1,13 @@
+appId: com.example.smart_food_life
+---
+# ============================================================
+# MOD-02 | TC-SHOP-02: Xóa danh sách mua sắm
+# ============================================================
+- runFlow: 05_shopping_create_list.yaml
+
+# Long press để xóa
+- longPressOn: "Mua cuối tuần"
+- assertVisible: "Xác nhận xóa danh sách"
+- tapOn: "Xóa"
+- assertVisible: "Đã xóa danh sách mua sắm"
+- assertNotVisible: "Mua cuối tuần"
