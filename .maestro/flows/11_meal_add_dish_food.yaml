@@ -1,0 +1,11 @@
+appId: com.example.smart_food_life
+---
+# MOD-04 | TC-MEAL-03: Thêm thực phẩm đơn lẻ
+- runFlow: 09_meal_view_calendar.yaml
+- tapOn: "Bữa Sáng"
+- assertVisible: "Chi tiết bữa ăn"
+- tapOn: "Thêm món"
+- tapOn: "Thực phẩm"
+- tapOn:
+    index: 0
+- tapOn: "Thêm vào bữa"

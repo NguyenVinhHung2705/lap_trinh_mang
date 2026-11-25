@@ -1,0 +1,39 @@
+appId: com.example.smart_food_life
+---
+# TC-E2E-02: Mua sắm → Nhập kho → Lên lịch
+- launchApp:
+    clearState: true
+- tapOn: "Dùng tài khoản Local (Dùng thử)"
+- assertVisible: "Tổng quan hôm nay"
+
+# MOD-02: Tạo danh sách mua sắm
+- tapOn: "Tạo DS mua"
+- assertVisible: "Tạo danh sách mới"
+- tapOn: "Tạo danh sách mới"
+- assertVisible: "Tạo danh sách mua sắm"
+- tapOn: "Ví dụ: Đi siêu thị cuối tuần"
+- inputText: "Mua thứ 7"
+- tapOn: "Tạo"
+- assertVisible: "Mua thứ 7"
+
+# Quay về home
+- tapOn:
+    point: "5%,5%"
+- assertVisible: "Tổng quan hôm nay"
+
+# MOD-01: Xem kho
+- tapOn: "Thêm kho"
+- assertVisible: "Nhập kho"
+- tapOn:
+    point: "5%,5%"
+- assertVisible: "Tổng quan hôm nay"
+
+# MOD-04: Lên lịch bữa Tối
+- tapOn: "Lên lịch"
+- assertVisible: "Kế hoạch bữa ăn"
+- tapOn: "Bữa Tối"
+- assertVisible: "Chi tiết bữa ăn"
+- tapOn: "Thêm món"
+- tapOn:
+    index: 0
+- tapOn: "Thêm vào bữa"

@@ -1,0 +1,14 @@
+appId: com.example.smart_food_life
+---
+# MOD-04 | TC-MEAL-09: Điều hướng lịch tuần
+- runFlow: 00_helpers.yaml
+- tapOn: "Lên lịch"
+- assertVisible: "Kế hoạch bữa ăn"
+- tapOn: "Kỳ trước"
+- assertVisible: "Kế hoạch bữa ăn"
+- tapOn: "Kỳ sau"
+# "Đổi ngày" là label của button thay đổi ngày (từ code: 'Đổi ngày')
+- tapOn: "Đổi ngày"
+- assertVisible: "Chọn ngày"
+- tapOn: "OK"
+- assertVisible: "Kế hoạch bữa ăn"

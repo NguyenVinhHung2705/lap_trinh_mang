@@ -1,0 +1,11 @@
+appId: com.example.smart_food_life
+---
+# ============================================================
+# HELPER FLOW: Đăng nhập nhanh bằng Local (dùng thử)
+# Dùng lại trong các flow khác bằng: runFlow: 00_helpers.yaml
+# ============================================================
+- launchApp:
+    clearState: true
+- assertVisible: "Đăng nhập"
+- tapOn: "Dùng tài khoản Local (Dùng thử)"
+- assertVisible: "Tổng quan hôm nay"

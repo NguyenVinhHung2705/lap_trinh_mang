@@ -1,0 +1,5 @@
+appId: com.example.smart_food_life
+---
+# Cấu hình chung cho toàn bộ Maestro flows
+# Chạy tất cả: maestro test .maestro/flows/
+# Chạy 1 flow: maestro test .maestro/flows/01_auth_signin.yaml

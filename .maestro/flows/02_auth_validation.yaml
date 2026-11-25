@@ -1,0 +1,31 @@
+appId: com.example.smart_food_life
+---
+# MOD-05 | TC-AUTH-02: Validation form đăng nhập
+- launchApp:
+    clearState: true
+- assertVisible: "Đăng nhập"
+
+# Email field có label "Email" (labelText trong AuthTextField)
+- tapOn: "Email"
+- inputText: "khong-phai-email"
+- tapOn: "Đăng nhập"
+- assertVisible: "Email chưa đúng định dạng."
+
+# Sửa lại email đúng, để mật khẩu trống
+- tapOn: "Email"
+- inputText: "test@example.com"
+- tapOn: "Đăng nhập"
+- assertVisible: "Nhập mật khẩu."
+
+# Chuyển sang đăng ký
+- tapOn: "Chưa có tài khoản? Đăng ký"
+- assertVisible: "Đăng ký"
+- tapOn:
+    point: "5%,5%"
+- assertVisible: "Đăng nhập"
+
+# Quên mật khẩu
+- tapOn: "Quên mật khẩu?"
+- assertVisible: "Quên mật khẩu"
+- tapOn:
+    point: "5%,5%"

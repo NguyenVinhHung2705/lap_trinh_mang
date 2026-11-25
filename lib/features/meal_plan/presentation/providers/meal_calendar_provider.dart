@@ -105,12 +105,15 @@ final mealRepositoryProvider = Provider<MealRepository>((ref) {
 });
 
 /// Provides the authenticated user's UID from Firebase Auth (`MOD-05` contract).
+/// Falls back to 'guest_demo' when offline or unauthenticated for full demo interactivity.
 final currentUserIdProvider = Provider<String?>((ref) {
   try {
-    return FirebaseAuth.instance.currentUser?.uid;
-  } catch (_) {
-    return null;
-  }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null && uid.isNotEmpty) {
+      return uid;
+    }
+  } catch (_) {}
+  return 'guest_demo';
 });
 
 /// Controller provider for [MealCalendarState].
