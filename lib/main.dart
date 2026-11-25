@@ -14,24 +14,19 @@ import 'features/auth/presentation/providers/auth_providers.dart';
 import 'features/auth/presentation/screens/sign_in_screen.dart';
 import 'shared/theme/app_colors.dart';
 
-Future<void> main() async {
-  // Đảm bảo Flutter binding đã sẵn sàng
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  // Khởi tạo Firebase trước khi chạy ứng dụng
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
+  // THÊM:
+  await Supabase.initialize(
+    url: 'https://jqooervaawgfwsvmukav.supabase.co',   
+    anonKey: 'sb_publishable_l7_3SHr60bpr6lIB34GK4A_6TGYM4GI',                 
   );
 
-  // Gieo dữ liệu hạt giống ban đầu cho công thức nếu Cloud Firestore trống
-  RecipeModule.repository.seedInitialRecipesIfEmpty().ignore();
-
-  // Khởi chạy ứng dụng sau khi Firebase đã sẵn sàng
-  runApp(
-    const ProviderScope(
-      child: SmartFoodLifeApp(),
-    ),
-  );
+  runApp(const ProviderScope(child: SmartFoodLifeApp()));
 }
 
 class SmartFoodLifeApp extends ConsumerWidget {
