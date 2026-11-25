@@ -12,7 +12,6 @@ appId: com.example.smart_food_life
 - assertVisible: "Email chưa đúng định dạng."
 
 # Sửa lại email đúng, để mật khẩu trống
-- clearText
 - tapOn: "Email"
 - inputText: "test@example.com"
 - tapOn: "Đăng nhập"

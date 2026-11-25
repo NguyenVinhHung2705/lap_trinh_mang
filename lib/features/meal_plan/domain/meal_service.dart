@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../../pantry/data/models/food_item.dart';
 import '../../pantry/data/pantry_mock_data.dart';
 import '../../recipe/data/recipe_mock_data.dart';
 import '../data/meal_repository.dart';
@@ -252,10 +253,13 @@ class FirestoreFoodCatalogReader implements FoodCatalogReader {
       }
     } catch (_) {}
 
-    final mock = PantryMockData.initialFoods.firstWhere(
-          (f) => f.id == foodId,
-          orElse: () => null,
-        );
+    FoodItem? mock;
+    for (final f in PantryMockData.initialFoods) {
+      if (f.id == foodId) {
+        mock = f;
+        break;
+      }
+    }
     if (mock != null) {
       return FoodSummary(
         id: mock.id,

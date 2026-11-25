@@ -4,7 +4,6 @@ appId: com.example.smart_food_life
 - runFlow: 09_meal_view_calendar.yaml
 - tapOn: "Bữa Sáng"
 - assertVisible: "Chi tiết bữa ăn"
-- tapOn:
-    description: "Nhắc chuẩn bị bữa ăn"
+- tapOn: "Nhắc chuẩn bị bữa ăn"
 - assertVisible: "Nhắc nhở"
 - tapOn: "Hủy"

@@ -3,8 +3,7 @@ appId: com.example.smart_food_life
 # MOD-05 | TC-PROFILE-01: Xem hồ sơ cá nhân
 - runFlow: 00_helpers.yaml
 # Profile mở qua CircleAvatar góc phải header — dùng index 0 của button cuối AppBar
-- tapOn:
-    description: "Tài khoản"
+- tapOn: "Tài khoản"
 # AppBar title trong profile_screen là "Tài khoản"
 - assertVisible: "Tài khoản"
 # Các nút trong local mode
