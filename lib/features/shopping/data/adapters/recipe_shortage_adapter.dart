@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/food_shortage_item.dart';
 import 'pantry_adapter.dart';
@@ -21,20 +21,20 @@ abstract interface class RecipeShortageReader {
   Future<List<Map<String, dynamic>>> getRecipesWithShortages(String userId);
 }
 
-/// Firestore implementation connecting to MOD-03 (`cong_thuc`, `nguyen_lieu_cong_thuc`).
-class FirestoreRecipeShortageAdapter implements RecipeShortageReader {
-  FirestoreRecipeShortageAdapter({
-    FirebaseFirestore? firestore,
+/// Supabase implementation connecting to MOD-03 (`cong_thuc`, `nguyen_lieu_cong_thuc`).
+class SupabaseRecipeShortageAdapter implements RecipeShortageReader {
+  SupabaseRecipeShortageAdapter({
+    SupabaseClient? supabase,
     PantryReader? pantryReader,
-  })  : _customFirestore = firestore,
+  })  : _customSupabase = supabase,
         _pantryReader = pantryReader ??
-            FirestorePantryAdapter(
-              firestore: firestore,
+            SupabasePantryAdapter(
+              supabase: supabase,
             );
 
-  final FirebaseFirestore? _customFirestore;
-  FirebaseFirestore get _firestore =>
-      _customFirestore ?? FirebaseFirestore.instance;
+  final SupabaseClient? _customSupabase;
+  SupabaseClient get _supabase =>
+      _customSupabase ?? Supabase.instance.client;
   final PantryReader _pantryReader;
 
   @override
@@ -43,43 +43,37 @@ class FirestoreRecipeShortageAdapter implements RecipeShortageReader {
     required String recipeId,
     required double desiredServings,
   }) async {
-    // 1. Fetch recipe doc
-    DocumentSnapshot<Map<String, dynamic>> recipeSnap =
-        await _firestore.collection('cong_thuc').doc(recipeId).get();
+    // 1. Fetch recipe row
+    final recipeRow = await _supabase
+        .from('cong_thuc')
+        .select()
+        .eq('id', recipeId)
+        .maybeSingle();
 
-    if (!recipeSnap.exists) {
-      recipeSnap = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('cong_thuc')
-          .doc(recipeId)
-          .get();
-    }
-
-    if (!recipeSnap.exists || recipeSnap.data() == null) {
+    if (recipeRow == null) {
       return [];
     }
 
-    final recipeData = recipeSnap.data()!;
-    final recipeName = recipeData['ten_mon'] as String? ?? 'Món ăn';
-    final baseServings = (recipeData['khau_phan'] as num?)?.toDouble() ?? 1.0;
+    final recipeName = recipeRow['ten'] as String? ?? 'Món ăn';
+    final baseServings = (recipeRow['khau_phan'] as num?)?.toDouble() ?? 1.0;
     final scaleFactor = desiredServings / (baseServings > 0 ? baseServings : 1.0);
 
     // 2. Fetch recipe ingredients
-    final ingredientsSnap = await recipeSnap.reference
-        .collection('nguyen_lieu_cong_thuc')
-        .get();
+    final ingredientRows = await _supabase
+        .from('nguyen_lieu_cong_thuc')
+        .select()
+        .eq('cong_thuc_id', recipeId);
 
     final shortages = <FoodShortageItem>[];
     final today = DateTime.now();
 
-    for (final doc in ingredientsSnap.docs) {
-      final ingData = doc.data();
-      final foodId = ingData['ma_thuc_pham']?.toString() ?? doc.id;
+    for (final row in (ingredientRows as List)) {
+      final ingData = row as Map<String, dynamic>;
+      final foodId = ingData['thuc_pham_id']?.toString() ?? ingData['id']?.toString() ?? '';
       final foodName = ingData['ten_thuc_pham'] as String? ?? 'Nguyên liệu';
-      final unitId = ingData['ma_don_vi']?.toString() ?? '1';
-      final unitName = ingData['ten_don_vi'] as String? ?? 'đơn vị';
-      final baseQty = (ingData['so_luong'] as num?)?.toDouble() ?? 0.0;
+      final unitId = ingData['don_vi_id']?.toString() ?? '1';
+      final unitName = ingData['ky_hieu_don_vi'] as String? ?? 'đơn vị';
+      final baseQty = (ingData['so_luong_co_so'] as num?)?.toDouble() ?? 0.0;
       final neededQty = baseQty * scaleFactor;
 
       if (neededQty <= 0) continue;
@@ -115,15 +109,18 @@ class FirestoreRecipeShortageAdapter implements RecipeShortageReader {
 
   @override
   Future<List<Map<String, dynamic>>> getRecipesWithShortages(String userId) async {
-    final snapshot = await _firestore.collection('cong_thuc').limit(20).get();
-    return snapshot.docs.map((doc) {
-      final d = doc.data();
+    final rows = await _supabase
+        .from('cong_thuc')
+        .select()
+        .limit(20);
+
+    return (rows as List).map((row) {
+      final d = row as Map<String, dynamic>;
       return {
-        'id': doc.id,
-        'name': d['ten_mon'] ?? 'Món ăn',
+        'id': d['id'],
+        'name': d['ten'] ?? 'Món ăn',
         'servings': (d['khau_phan'] as num?)?.toDouble() ?? 1.0,
       };
     }).toList();
   }
 }
-
