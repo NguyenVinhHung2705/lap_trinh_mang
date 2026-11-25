@@ -9,7 +9,7 @@ import '../providers/meal_calendar_provider.dart';
 
 /// Provides [PantryBatchReader] (`MOD-01` integration point).
 final pantryBatchReaderProvider = Provider<PantryBatchReader>((ref) {
-  return FirestorePantryBatchReader();
+  return SupabasePantryBatchReader();
 });
 
 /// Provides [StockDeductionService] (`MOD-04-08` / F8).

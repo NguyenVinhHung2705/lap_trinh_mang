@@ -349,7 +349,7 @@ class _RecipeEditorScreenState extends ConsumerState<RecipeEditorScreen> {
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<RecipeVisibility>(
-                    initialValue: _visibility,
+                    value: _visibility,
                     decoration: _inputDecoration('Quyền riêng tư'),
                     items: RecipeVisibility.values.map((v) {
                       return DropdownMenuItem(

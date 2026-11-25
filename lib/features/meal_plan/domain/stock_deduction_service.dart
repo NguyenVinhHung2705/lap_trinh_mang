@@ -1,11 +1,11 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../pantry/data/pantry_mock_data.dart';
 import '../data/meal_repository.dart';
 import '../data/models/consumption_request.dart';
 import '../data/models/meal.dart';
 
-/// Single pantry batch candidate for FEFO allocation (`lo_thuc_pham`, owned by `MOD-01`).
+/// Single pantry batch candidate for FEFO allocation (`lo_thuc_pham`, owned by MOD-01).
 class PantryBatchInfo {
   const PantryBatchInfo({
     required this.id,
@@ -16,22 +16,13 @@ class PantryBatchInfo {
     required this.availableQuantity,
   });
 
-  /// Batch ID (`ma_lo`).
   final String id;
-
-  /// Food ID (`ma_thuc_pham`).
   final String foodId;
-
-  /// Location ID (`ma_vi_tri`).
   final String locationId;
-
-  /// Import date (`ngay_nhap`).
   final DateTime importDate;
-
-  /// Expiration date (`han_su_dung`).
   final DateTime expiryDate;
 
-  /// Remaining usable quantity in base unit (`so_luong_ton` >= 0).
+  /// Remaining usable quantity in base unit (>= 0).
   final double availableQuantity;
 
   bool isUsable(DateTime referenceDate) {
@@ -71,7 +62,8 @@ class FoodDeductionPlan {
   final List<BatchAllocation> allocations;
 
   bool get isSufficient => totalAvailableQuantity >= requiredQuantity;
-  double get shortage => isSufficient ? 0.0 : (requiredQuantity - totalAvailableQuantity);
+  double get shortage =>
+      isSufficient ? 0.0 : (requiredQuantity - totalAvailableQuantity);
 }
 
 /// Complete FEFO preview before atomic execution.
@@ -90,7 +82,7 @@ class MealCompletionPreview {
       plans.where((p) => !p.isSufficient).toList();
 }
 
-/// Thrown when at least one ingredient lacks sufficient stock for all-or-nothing completion (TC-09).
+/// Thrown when at least one ingredient lacks sufficient stock (all-or-nothing, TC-09).
 class InsufficientStockException extends MealPlanException {
   InsufficientStockException(this.shortages)
       : super(
@@ -111,14 +103,16 @@ abstract interface class PantryBatchReader {
   });
 }
 
-/// Default Firestore implementation reading `/users/{uid}/lo_thuc_pham`.
-class FirestorePantryBatchReader implements PantryBatchReader {
-  FirestorePantryBatchReader({FirebaseFirestore? firestore})
-      : _customFirestore = firestore;
+/// Supabase implementation reading `lo_thuc_pham` (shared schema in `SPRINT_FINAL.md`).
+class SupabasePantryBatchReader implements PantryBatchReader {
+  SupabasePantryBatchReader({SupabaseClient? supabase})
+      : _customSupabase = supabase;
 
-  final FirebaseFirestore? _customFirestore;
-  FirebaseFirestore get _firestore =>
-      _customFirestore ?? FirebaseFirestore.instance;
+  final SupabaseClient? _customSupabase;
+  SupabaseClient get _db => _customSupabase ?? Supabase.instance.client;
+
+  /// Batches without expiry date are usable and sorted last.
+  static final DateTime _noExpiry = DateTime(9999, 12, 31);
 
   @override
   Future<List<PantryBatchInfo>> getUsableBatchesForFood({
@@ -128,63 +122,60 @@ class FirestorePantryBatchReader implements PantryBatchReader {
   }) async {
     final refDateKey = Meal.formatLocalDate(referenceDate);
 
-    if (userId.isEmpty || userId.startsWith('mock_') || userId.startsWith('guest_')) {
+    if (userId.isEmpty ||
+        userId.startsWith('mock_') ||
+        userId.startsWith('guest_')) {
       return _getMemoryBatches(foodId, refDateKey);
     }
 
     try {
-      final snapshot = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('lo_thuc_pham')
-          .where('ma_thuc_pham', isEqualTo: foodId)
-          .get();
-
-      if (snapshot.docs.isEmpty) {
-        return _getMemoryBatches(foodId, refDateKey);
-      }
+      final rows = await _db
+          .from('lo_thuc_pham')
+          .select()
+          .eq('user_id', userId)
+          .eq('thuc_pham_id', foodId)
+          .gt('so_luong', 0);
 
       final batches = <PantryBatchInfo>[];
-      for (final doc in snapshot.docs) {
-        final data = doc.data();
-        final expRaw = data['han_su_dung'];
-        if (expRaw == null) continue;
-
-        final expDate = Meal.parseLocalDate(expRaw);
-        final expKey = Meal.formatLocalDate(expDate);
-        if (expKey.compareTo(refDateKey) < 0) continue; // Expired
-
-        // Compatible with both direct `so_luong_ton` or computed balance
-        final qty = (data['so_luong_ton'] as num?)?.toDouble() ??
-            ((data['so_luong_nhap'] as num?)?.toDouble() ?? 0.0) -
-                ((data['so_luong_xuat'] as num?)?.toDouble() ?? 0.0);
-
-        if (qty <= 0) continue;
-
+      for (final r in rows) {
+        final expRaw = r['ngay_het_han'];
+        final expDate =
+            expRaw == null ? _noExpiry : Meal.parseLocalDate(expRaw as Object);
+        if (Meal.formatLocalDate(expDate).compareTo(refDateKey) < 0) {
+          continue; // expired → never deducted
+        }
+        final createdRaw = r['created_at'];
         batches.add(
           PantryBatchInfo(
-            id: doc.id,
+            id: r['id'].toString(),
             foodId: foodId,
-            locationId: data['ma_vi_tri'] as String? ?? '',
-            importDate: Meal.parseLocalDate(data['ngay_nhap'] ?? DateTime.now()),
+            locationId: r['vi_tri'] as String? ?? '',
+            importDate: createdRaw is String
+                ? DateTime.parse(createdRaw).toLocal()
+                : DateTime.now(),
             expiryDate: expDate,
-            availableQuantity: qty,
+            availableQuantity: (r['so_luong'] as num?)?.toDouble() ?? 0,
           ),
         );
       }
 
-      // FEFO: Sort by expiry date ASC (earliest expiry first, TC-11)
-      batches.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
+      // FEFO: earliest expiry first, then oldest import (TC-11).
+      batches.sort((a, b) {
+        final byExpiry = a.expiryDate.compareTo(b.expiryDate);
+        return byExpiry != 0 ? byExpiry : a.importDate.compareTo(b.importDate);
+      });
       return batches;
     } catch (_) {
-      return _getMemoryBatches(foodId, refDateKey);
+      return const [];
     }
   }
 
   List<PantryBatchInfo> _getMemoryBatches(String foodId, String refDateKey) {
     final memoryBatches = <PantryBatchInfo>[];
     for (final b in PantryMockData.initialBatches) {
-      if (b.foodId == foodId || foodId.contains(b.foodId) || b.foodId.contains(foodId)) {
+      if (b.foodId == foodId ||
+          foodId.contains(b.foodId) ||
+          b.foodId.contains(foodId)) {
         final expKey = Meal.formatLocalDate(b.expiryDate);
         if (expKey.compareTo(refDateKey) < 0) continue;
         if (b.quantity <= 0) continue;
@@ -192,7 +183,7 @@ class FirestorePantryBatchReader implements PantryBatchReader {
           PantryBatchInfo(
             id: b.id,
             foodId: foodId,
-            locationId: b.locationName ?? 'loc_pantry',
+            locationId: b.locationName,
             importDate: b.importDate,
             expiryDate: b.expiryDate,
             availableQuantity: b.quantity,
@@ -205,25 +196,24 @@ class FirestorePantryBatchReader implements PantryBatchReader {
   }
 }
 
-/// Domain service implementing atomic meal completion and FEFO stock deduction (`MOD-04-08` / F8).
+/// Atomic meal completion + FEFO stock deduction (MOD-04-08 / F8).
 class StockDeductionService {
   StockDeductionService({
     required MealRepository mealRepository,
     PantryBatchReader? batchReader,
-    FirebaseFirestore? firestore,
+    SupabaseClient? supabase,
   })  : _mealRepository = mealRepository,
-        _batchReader = batchReader ?? FirestorePantryBatchReader(firestore: firestore),
-        _customFirestore = firestore;
+        _batchReader =
+            batchReader ?? SupabasePantryBatchReader(supabase: supabase),
+        _customSupabase = supabase;
 
   final MealRepository _mealRepository;
   final PantryBatchReader _batchReader;
-  final FirebaseFirestore? _customFirestore;
-  FirebaseFirestore get _firestore =>
-      _customFirestore ?? FirebaseFirestore.instance;
+  final SupabaseClient? _customSupabase;
+  SupabaseClient get _db => _customSupabase ?? Supabase.instance.client;
 
-  CollectionReference<Map<String, dynamic>> _userRef(String userId) {
-    return _firestore.collection('users').doc(userId).collection('meals');
-  }
+  /// Name of the PostgreSQL function in `supabase/mod04_meal_plan.sql`.
+  static const String completeMealRpc = 'complete_meal_fefo';
 
   /// Calculates the FEFO deduction plan for UI preview without modifying the database.
   Future<MealCompletionPreview> previewPlan({
@@ -233,16 +223,17 @@ class StockDeductionService {
     final today = Meal.normalizeLocalDate(DateTime.now());
     final plans = <FoodDeductionPlan>[];
 
-    // Group items by foodId
     final groupedItems = <String, List<ConsumptionItem>>{};
     for (final item in request.items) {
+      if (item.effectiveQuantity <= 0) continue;
       groupedItems.putIfAbsent(item.foodId, () => []).add(item);
     }
 
     for (final entry in groupedItems.entries) {
       final foodId = entry.key;
       final items = entry.value;
-      final requiredQty = items.fold<double>(0.0, (acc, it) => acc + it.effectiveQuantity);
+      final requiredQty =
+          items.fold<double>(0.0, (acc, it) => acc + it.effectiveQuantity);
       final first = items.first;
 
       final batches = await _batchReader.getUsableBatchesForFood(
@@ -254,17 +245,15 @@ class StockDeductionService {
       final totalAvailable =
           batches.fold<double>(0.0, (acc, b) => acc + b.availableQuantity);
 
-      // Allocate FEFO
       final allocations = <BatchAllocation>[];
-      var remainingToAllocate = requiredQty;
-
+      var remaining = requiredQty;
       for (final batch in batches) {
-        if (remainingToAllocate <= 0) break;
-        final take = batch.availableQuantity >= remainingToAllocate
-            ? remainingToAllocate
+        if (remaining <= 0) break;
+        final take = batch.availableQuantity >= remaining
+            ? remaining
             : batch.availableQuantity;
         allocations.add(BatchAllocation(batch: batch, quantityToDeduct: take));
-        remainingToAllocate -= take;
+        remaining -= take;
       }
 
       plans.add(
@@ -279,126 +268,98 @@ class StockDeductionService {
       );
     }
 
-    return MealCompletionPreview(
-      mealId: request.meal.id,
-      plans: plans,
-    );
+    return MealCompletionPreview(mealId: request.meal.id, plans: plans);
   }
 
-  /// Executes atomic meal completion and stock deduction in a single Firestore transaction (`MOD-04-08`).
+  /// Completes a meal and deducts stock atomically (MOD-04-08).
   ///
-  /// Guarantees:
-  /// 1. Idempotency (TC-10): If meal already COMPLETED, safely returns without re-deducting.
-  /// 2. All-or-nothing (TC-09): If ANY ingredient is insufficient, transaction aborts completely.
-  /// 3. FEFO allocation (TC-11): Deducts from earliest-expiry batches first.
-  /// 4. Stock movement audit trail (`bien_dong_kho` with `CONSUME` type, matching `schema.sql` on branch `mod4`).
+  /// Guarantees (enforced inside PostgreSQL function `complete_meal_fefo`):
+  /// 1. Idempotency (TC-10): already COMPLETED → returns without re-deducting.
+  /// 2. All-or-nothing (TC-09): any shortage → `RAISE EXCEPTION` → full rollback.
+  /// 3. FEFO (TC-11): earliest-expiry batches deducted first (`FOR UPDATE` row locks).
+  /// 4. Audit trail: `bien_dong_kho` rows with `loai_bien_dong = 'CONSUME'`,
+  ///    `so_luong_nhap = 0`, `so_luong_xuat = deducted amount`.
   Future<Meal> completeMealAtomic({
     required String userId,
     required ConsumptionRequest request,
   }) async {
-    if (userId.isEmpty || userId.startsWith('mock_') || userId.startsWith('guest_')) {
-      final currentMeal = await _mealRepository.getMealById(
-        userId: userId,
-        mealId: request.meal.id,
-      );
-      if (currentMeal == null) throw const MealNotFoundException();
-      if (currentMeal.isCompleted) return currentMeal;
-      if (currentMeal.isCancelled) {
-        throw const MealPlanException('Bữa ăn đã bị hủy, không thể hoàn thành.');
-      }
-      final now = DateTime.now();
+    final currentMeal = await _mealRepository.getMealById(
+      userId: userId,
+      mealId: request.meal.id,
+    );
+    if (currentMeal == null) throw const MealNotFoundException();
+    if (currentMeal.isCompleted) return currentMeal; // idempotent (TC-10)
+    if (currentMeal.isCancelled) {
+      throw const MealPlanException('Bữa ăn đã bị hủy, không thể hoàn thành.');
+    }
+
+    // Guest/offline mode: no real stock to deduct.
+    if (userId.isEmpty ||
+        userId.startsWith('mock_') ||
+        userId.startsWith('guest_')) {
       return _mealRepository.markMealCompleted(
         userId: userId,
         mealId: currentMeal.id,
-        completedAt: now,
+        completedAt: DateTime.now(),
       );
     }
 
-    final mealDocRef = _userRef(userId).doc(request.meal.id);
-    final movementsRef =
-        _firestore.collection('users').doc(userId).collection('bien_dong_kho');
-    final batchesCollection =
-        _firestore.collection('users').doc(userId).collection('lo_thuc_pham');
+    // Fast fail with a friendly shortage message before hitting the database.
+    final preview = await previewPlan(userId: userId, request: request);
+    if (!preview.isAllSufficient) {
+      throw InsufficientStockException(preview.shortages);
+    }
 
-    return _firestore.runTransaction<Meal>((txn) async {
-      // 1. Read meal status inside transaction (Idempotency guard - TC-10)
-      final mealSnap = await txn.get(mealDocRef);
-      if (!mealSnap.exists || mealSnap.data() == null) {
-        throw const MealNotFoundException();
+    final payload = <Map<String, Object?>>[];
+    for (final plan in preview.plans) {
+      final firstItem =
+          request.items.firstWhere((it) => it.foodId == plan.foodId);
+      payload.add({
+        'food_id': plan.foodId,
+        'food_name': plan.foodName,
+        'meal_item_id': firstItem.mealItemId,
+        'qty': plan.requiredQuantity,
+      });
+    }
+
+    try {
+      await _db.rpc(completeMealRpc, params: {
+        'p_user_id': userId,
+        'p_meal_id': MealRepository.rowMealId(userId, currentMeal.id),
+        'p_items': payload,
+        'p_today': Meal.formatLocalDate(DateTime.now()),
+      });
+    } on PostgrestException catch (e) {
+      if (e.message.contains('INSUFFICIENT_STOCK')) {
+        // Stock changed between preview and commit → re-read and report.
+        final fresh = await previewPlan(userId: userId, request: request);
+        throw InsufficientStockException(
+          fresh.shortages.isNotEmpty ? fresh.shortages : preview.plans,
+        );
       }
-
-      final currentMeal = Meal.fromMap(
-        _normalizeMap(mealSnap.data()!),
-        id: mealSnap.id,
-      );
-
-      if (currentMeal.isCompleted) {
-        // Already completed on another device, idempotent return
-        return currentMeal;
-      }
-      if (currentMeal.isCancelled) {
+      if (e.message.contains('MEAL_CANCELLED')) {
         throw const MealPlanException('Bữa ăn đã bị hủy, không thể hoàn thành.');
       }
-
-      // 2. Read all needed batches inside transaction
-      final preview = await previewPlan(userId: userId, request: request);
-
-      // 3. Pre-condition check: All-or-nothing (TC-09)
-      if (!preview.isAllSufficient) {
-        throw InsufficientStockException(preview.shortages);
+      if (e.message.contains('MEAL_NOT_FOUND')) {
+        throw const MealNotFoundException();
       }
-
-      final now = DateTime.now();
-
-      // 4. Execute writes in the atomic transaction
-      for (final plan in preview.plans) {
-        for (final alloc in plan.allocations) {
-          final batchRef = batchesCollection.doc(alloc.batch.id);
-
-          // Update remaining stock on batch
-          final newBalance = alloc.batch.availableQuantity - alloc.quantityToDeduct;
-          txn.update(batchRef, {
-            'so_luong_ton': newBalance,
-          });
-
-          // Write stock movement log (`bien_dong_kho`) matching `schema.sql` on `mod4`:
-          // loai_bien_dong = 'CONSUME', so_luong_nhap = 0, so_luong_xuat = alloc.quantityToDeduct
-          final movementDoc = movementsRef.doc();
-          txn.set(movementDoc, {
-            'ma_lo': alloc.batch.id,
-            'ma_chi_tiet_mua': null,
-            'ma_mon_an': request.items.firstWhere((it) => it.foodId == plan.foodId).mealItemId,
-            'loai_bien_dong': 'CONSUME',
-            'so_luong_nhap': 0.0,
-            'so_luong_xuat': alloc.quantityToDeduct,
-            'thoi_diem': now.toIso8601String(),
-            'ghi_chu': 'Tiêu thụ cho bữa ăn ${currentMeal.slot.labelVi} (${currentMeal.id})',
-          });
-        }
+      if (e.code == 'PGRST202' || e.code == '42883') {
+        throw const MealPlanException(
+          'Chưa cài hàm complete_meal_fefo trên Supabase. '
+          'Hãy chạy file supabase/mod04_meal_plan.sql trong SQL Editor.',
+        );
       }
+      throw MealPlanException('Lỗi hoàn thành bữa ăn: ${e.message}');
+    }
 
-      // 5. Mark meal as COMPLETED
-      final completedMeal = currentMeal.copyWith(
-        status: MealStatus.completed,
-        completedAt: now,
-      );
-
-      txn.update(mealDocRef, {
-        'trang_thai': MealStatus.completed.value,
-        'hoan_thanh_luc': now.toIso8601String(),
-      });
-
-      return completedMeal;
-    });
-  }
-
-  Map<String, Object?> _normalizeMap(Map<String, dynamic> raw) {
-    return raw.map((key, value) {
-      if (value is Timestamp) {
-        return MapEntry(key, value.toDate());
-      }
-      return MapEntry(key, value);
-    });
+    final updated = await _mealRepository.getMealById(
+      userId: userId,
+      mealId: currentMeal.id,
+    );
+    return updated ??
+        currentMeal.copyWith(
+          status: MealStatus.completed,
+          completedAt: DateTime.now(),
+        );
   }
 }
-

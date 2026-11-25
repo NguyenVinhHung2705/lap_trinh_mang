@@ -19,16 +19,16 @@ final shoppingRepositoryProvider = Provider<ShoppingRepository>((ref) {
 });
 
 final pantryReaderProvider = Provider<PantryReader>((ref) {
-  return FirestorePantryAdapter();
+  return SupabasePantryAdapter();
 });
 
 final pantrySyncWriterProvider = Provider<PantrySyncWriter>((ref) {
-  return FirestorePantryAdapter();
+  return SupabasePantryAdapter();
 });
 
 final recipeShortageReaderProvider = Provider<RecipeShortageReader>((ref) {
   final pantryReader = ref.watch(pantryReaderProvider);
-  return FirestoreRecipeShortageAdapter(pantryReader: pantryReader);
+  return SupabaseRecipeShortageAdapter(pantryReader: pantryReader);
 });
 
 final shoppingServiceProvider = Provider<ShoppingService>((ref) {
@@ -356,4 +356,3 @@ final shoppingSuggestionsControllerProvider = StateNotifierProvider<
   final service = ref.watch(shoppingServiceProvider);
   return ShoppingSuggestionsController(service);
 });
-

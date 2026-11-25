@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'models/recipe.dart';
 import 'models/recipe_ingredient.dart';
@@ -28,19 +28,19 @@ class RecipePermissionDeniedException extends RecipeException {
   ]);
 }
 
-/// Firestore data access layer for `cong_thuc`, `nguyen_lieu_cong_thuc`, and `cong_thuc_da_luu`.
+/// Supabase data access layer for `cong_thuc`, `nguyen_lieu_cong_thuc`, and `cong_thuc_da_luu`.
 ///
-/// Maps to:
-/// - `/cong_thuc/{recipeId}`
-/// - `/cong_thuc/{recipeId}/nguyen_lieu/{ingredientId}`
-/// - `/users/{userId}/cong_thuc_da_luu/{recipeId}`
+/// Tables:
+/// - `cong_thuc` (id UUID PK, ma_tac_gia, ten, mo_ta, hinh_anh, khau_phan, thoi_gian_nau, loai, created_at)
+/// - `nguyen_lieu_cong_thuc` (id UUID PK, cong_thuc_id FK, thuc_pham_id, ten_thuc_pham, don_vi_id, ky_hieu_don_vi, so_luong_co_so)
+/// - `cong_thuc_da_luu` (user_id, cong_thuc_id FK, saved_at, PK(user_id, cong_thuc_id))
 class RecipeRepository {
-  RecipeRepository({FirebaseFirestore? firestore})
-      : _customFirestore = firestore;
+  RecipeRepository({SupabaseClient? supabase})
+      : _customClient = supabase;
 
-  final FirebaseFirestore? _customFirestore;
-  FirebaseFirestore get _firestore =>
-      _customFirestore ?? FirebaseFirestore.instance;
+  final SupabaseClient? _customClient;
+  SupabaseClient get _supabase =>
+      _customClient ?? Supabase.instance.client;
 
   // In-memory fallback / mock store for offline & guest usage
   static final List<Recipe> _memoryRecipes = List<Recipe>.from(RecipeMockData.initialRecipes);
@@ -52,20 +52,18 @@ class RecipeRepository {
     return userId.isEmpty || userId.startsWith('mock_') || userId.startsWith('guest_');
   }
 
-  CollectionReference<Map<String, dynamic>> get _recipesRef {
-    return _firestore.collection('cong_thuc');
-  }
-
-  DocumentReference<Map<String, dynamic>> _recipeDoc(String recipeId) {
-    return _recipesRef.doc(recipeId);
-  }
-
-  CollectionReference<Map<String, dynamic>> _ingredientsRef(String recipeId) {
-    return _recipeDoc(recipeId).collection('nguyen_lieu');
-  }
-
-  CollectionReference<Map<String, dynamic>> _savedRef(String userId) {
-    return _firestore.collection('users').doc(userId).collection('cong_thuc_da_luu');
+  /// Normalizes a Supabase row map — converts ISO-8601 date strings to DateTime.
+  Map<String, Object?> _normalizeMap(Map<String, dynamic> raw) {
+    return raw.map((key, value) {
+      if (value is String) {
+        // Attempt to parse ISO 8601 timestamps
+        final dt = DateTime.tryParse(value);
+        if (dt != null && (key.contains('created_at') || key.contains('updated_at') || key.contains('saved_at'))) {
+          return MapEntry(key, dt);
+        }
+      }
+      return MapEntry(key, value);
+    });
   }
 
   /// Queries all recipes accessible to [userId], with optional title search, source filter, and saved filter.
@@ -91,9 +89,10 @@ class RecipeRepository {
         if (savedIds.isEmpty) return const [];
       }
 
-      final snapshot = await _recipesRef.get();
-      if (snapshot.docs.isEmpty) {
-        // Fallback to mock data if Firestore is empty
+      final rows = await _supabase.from('cong_thuc').select();
+      final List<Map<String, dynamic>> data = List<Map<String, dynamic>>.from(rows);
+      if (data.isEmpty) {
+        // Fallback to mock data if Supabase is empty
         return _filterMemoryRecipes(
           userId: userId,
           query: query,
@@ -103,7 +102,7 @@ class RecipeRepository {
       }
 
       return _filterRecipes(
-        snapshot.docs,
+        data,
         userId: userId,
         query: query,
         sourceFilter: sourceFilter,
@@ -139,8 +138,25 @@ class RecipeRepository {
     if (savedOnly) {
       return watchSavedRecipeIds(userId).asyncMap((savedIds) async {
         if (savedIds.isEmpty) return const <Recipe>[];
-        final snapshot = await _recipesRef.get();
-        if (snapshot.docs.isEmpty) {
+        try {
+          final rows = await _supabase.from('cong_thuc').select();
+          final List<Map<String, dynamic>> data = List<Map<String, dynamic>>.from(rows);
+          if (data.isEmpty) {
+            return _filterMemoryRecipes(
+              userId: userId,
+              query: query,
+              sourceFilter: sourceFilter,
+              savedOnly: true,
+            );
+          }
+          return _filterRecipes(
+            data,
+            userId: userId,
+            query: query,
+            sourceFilter: sourceFilter,
+            savedIds: savedIds,
+          );
+        } catch (_) {
           return _filterMemoryRecipes(
             userId: userId,
             query: query,
@@ -148,13 +164,6 @@ class RecipeRepository {
             savedOnly: true,
           );
         }
-        return _filterRecipes(
-          snapshot.docs,
-          userId: userId,
-          query: query,
-          sourceFilter: sourceFilter,
-          savedIds: savedIds,
-        );
       }).handleError((_) {
         return _filterMemoryRecipes(
           userId: userId,
@@ -165,23 +174,26 @@ class RecipeRepository {
       });
     }
 
-    return _recipesRef.snapshots().map(
-          (snapshot) {
-            if (snapshot.docs.isEmpty) {
-              return _filterMemoryRecipes(
-                userId: userId,
-                query: query,
-                sourceFilter: sourceFilter,
-              );
-            }
-            return _filterRecipes(
-              snapshot.docs,
+    return _supabase
+        .from('cong_thuc')
+        .stream(primaryKey: ['id'])
+        .map((rows) {
+          final List<Map<String, dynamic>> data = List<Map<String, dynamic>>.from(rows);
+          if (data.isEmpty) {
+            return _filterMemoryRecipes(
               userId: userId,
               query: query,
               sourceFilter: sourceFilter,
             );
-          },
-        ).handleError((_) {
+          }
+          return _filterRecipes(
+            data,
+            userId: userId,
+            query: query,
+            sourceFilter: sourceFilter,
+          );
+        })
+        .handleError((_) {
           return _filterMemoryRecipes(
             userId: userId,
             query: query,
@@ -198,9 +210,13 @@ class RecipeRepository {
           orElse: () => null,
         );
     try {
-      final doc = await _recipeDoc(recipeId).get();
-      if (!doc.exists || doc.data() == null) return memoryRecipe;
-      return Recipe.fromMap(_normalizeMap(doc.data()!), id: doc.id);
+      final row = await _supabase
+          .from('cong_thuc')
+          .select()
+          .eq('id', recipeId)
+          .maybeSingle();
+      if (row == null) return memoryRecipe;
+      return Recipe.fromMap(_normalizeMap(row), id: row['id'] as String);
     } catch (_) {
       return memoryRecipe;
     }
@@ -210,13 +226,17 @@ class RecipeRepository {
   Future<List<RecipeIngredient>> getRecipeIngredients(String recipeId) async {
     final memoryList = _memoryIngredients[recipeId] ?? const [];
     try {
-      final snapshot = await _ingredientsRef(recipeId).get();
-      if (snapshot.docs.isEmpty) return memoryList;
-      return snapshot.docs
+      final rows = await _supabase
+          .from('nguyen_lieu_cong_thuc')
+          .select()
+          .eq('cong_thuc_id', recipeId);
+      final List<Map<String, dynamic>> data = List<Map<String, dynamic>>.from(rows);
+      if (data.isEmpty) return memoryList;
+      return data
           .map(
-            (doc) => RecipeIngredient.fromMap(
-              _normalizeMap(doc.data()),
-              id: doc.id,
+            (row) => RecipeIngredient.fromMap(
+              _normalizeMap(row),
+              id: row['id'] as String,
             ),
           )
           .toList();
@@ -228,22 +248,26 @@ class RecipeRepository {
   /// Streams ingredients for a recipe in real time.
   Stream<List<RecipeIngredient>> watchRecipeIngredients(String recipeId) {
     final memoryList = _memoryIngredients[recipeId] ?? const [];
-    return _ingredientsRef(recipeId).snapshots().map(
-          (snapshot) {
-            if (snapshot.docs.isEmpty) return memoryList;
-            return snapshot.docs
-                .map(
-                  (doc) => RecipeIngredient.fromMap(
-                    _normalizeMap(doc.data()),
-                    id: doc.id,
-                  ),
-                )
-                .toList();
-          },
-        ).handleError((_) => memoryList);
+    return _supabase
+        .from('nguyen_lieu_cong_thuc')
+        .stream(primaryKey: ['id'])
+        .eq('cong_thuc_id', recipeId)
+        .map((rows) {
+          final List<Map<String, dynamic>> data = List<Map<String, dynamic>>.from(rows);
+          if (data.isEmpty) return memoryList;
+          return data
+              .map(
+                (row) => RecipeIngredient.fromMap(
+                  _normalizeMap(row),
+                  id: row['id'] as String,
+                ),
+              )
+              .toList();
+        })
+        .handleError((_) => memoryList);
   }
 
-  /// Creates a new recipe and writes its ingredient subcollection atomically.
+  /// Creates a new recipe and writes its ingredients.
   Future<Recipe> createRecipe({
     required Recipe recipe,
     required List<RecipeIngredient> ingredients,
@@ -268,16 +292,20 @@ class RecipeRepository {
     }
 
     try {
-      final docRef = _recipeDoc(newId);
-      final batch = _firestore.batch();
-      batch.set(docRef, persistedRecipe.toMap());
+      // Insert the recipe row
+      await _supabase.from('cong_thuc').upsert({
+        ...persistedRecipe.toMap(),
+        'id': newId,
+      });
 
+      // Insert all ingredient rows
       for (final ing in _memoryIngredients[newId]!) {
-        final ingRef = _ingredientsRef(newId).doc(ing.id);
-        batch.set(ingRef, ing.toMap());
+        await _supabase.from('nguyen_lieu_cong_thuc').upsert({
+          ...ing.toMap(),
+          'id': ing.id,
+          'cong_thuc_id': newId,
+        });
       }
-
-      await batch.commit();
     } catch (_) {
       // Ignored for offline mode
     }
@@ -285,7 +313,7 @@ class RecipeRepository {
     return persistedRecipe;
   }
 
-  /// Updates an existing recipe and synchronizes ingredients subcollection.
+  /// Updates an existing recipe and synchronizes ingredients.
   Future<void> updateRecipe({
     required String userId,
     required Recipe recipe,
@@ -307,26 +335,30 @@ class RecipeRepository {
       throw const RecipePermissionDeniedException();
     }
 
-    final batch = _firestore.batch();
-    final docRef = _recipeDoc(recipe.id);
-    batch.update(docRef, recipe.toMap());
+    // Update the recipe row
+    await _supabase
+        .from('cong_thuc')
+        .update(recipe.toMap())
+        .eq('id', recipe.id);
 
-    // Clean up existing ingredients and replace with new set
-    final existingIngs = await _ingredientsRef(recipe.id).get();
-    for (final doc in existingIngs.docs) {
-      batch.delete(doc.reference);
-    }
+    // Delete existing ingredients and replace with new set
+    await _supabase
+        .from('nguyen_lieu_cong_thuc')
+        .delete()
+        .eq('cong_thuc_id', recipe.id);
 
     for (final ing in ingredients) {
-      final ingRef = _ingredientsRef(recipe.id).doc(ing.foodId);
-      final persistedIng = ing.copyWith(id: ingRef.id, recipeId: recipe.id);
-      batch.set(ingRef, persistedIng.toMap());
+      final ingId = ing.foodId;
+      final persistedIng = ing.copyWith(id: ingId, recipeId: recipe.id);
+      await _supabase.from('nguyen_lieu_cong_thuc').insert({
+        ...persistedIng.toMap(),
+        'id': ingId,
+        'cong_thuc_id': recipe.id,
+      });
     }
-
-    await batch.commit();
   }
 
-  /// Deletes a recipe document and all its ingredient subcollection entries.
+  /// Deletes a recipe and all its ingredient entries.
   Future<void> deleteRecipe({
     required String userId,
     required String recipeId,
@@ -344,16 +376,17 @@ class RecipeRepository {
       throw const RecipePermissionDeniedException();
     }
 
-    final batch = _firestore.batch();
-    final docRef = _recipeDoc(recipeId);
+    // Delete ingredients first (FK dependency)
+    await _supabase
+        .from('nguyen_lieu_cong_thuc')
+        .delete()
+        .eq('cong_thuc_id', recipeId);
 
-    final ingredientsSnap = await _ingredientsRef(recipeId).get();
-    for (final doc in ingredientsSnap.docs) {
-      batch.delete(doc.reference);
-    }
-
-    batch.delete(docRef);
-    await batch.commit();
+    // Delete the recipe
+    await _supabase
+        .from('cong_thuc')
+        .delete()
+        .eq('id', recipeId);
   }
 
   /// Bookmarks or un-bookmarks a recipe for [userId] (`cong_thuc_da_luu`).
@@ -373,15 +406,25 @@ class RecipeRepository {
     }
 
     try {
-      final docRef = _savedRef(userId).doc(recipeId);
-      final doc = await docRef.get();
-      if (doc.exists) {
-        await docRef.delete();
+      final existing = await _supabase
+          .from('cong_thuc_da_luu')
+          .select()
+          .eq('user_id', userId)
+          .eq('cong_thuc_id', recipeId)
+          .maybeSingle();
+
+      if (existing != null) {
+        await _supabase
+            .from('cong_thuc_da_luu')
+            .delete()
+            .eq('user_id', userId)
+            .eq('cong_thuc_id', recipeId);
         return false;
       } else {
-        await docRef.set({
-          'ma_cong_thuc': recipeId,
-          'ngay_luu': DateTime.now().toIso8601String(),
+        await _supabase.from('cong_thuc_da_luu').insert({
+          'user_id': userId,
+          'cong_thuc_id': recipeId,
+          'saved_at': DateTime.now().toUtc().toIso8601String(),
         });
         return true;
       }
@@ -395,8 +438,12 @@ class RecipeRepository {
     final memoryList = _memorySavedIds[userId]?.toList() ?? const [];
     if (_isMockUser(userId)) return memoryList;
     try {
-      final snap = await _savedRef(userId).get();
-      return snap.docs.map((doc) => doc.id).toList();
+      final rows = await _supabase
+          .from('cong_thuc_da_luu')
+          .select('cong_thuc_id')
+          .eq('user_id', userId);
+      final List<Map<String, dynamic>> data = List<Map<String, dynamic>>.from(rows);
+      return data.map((row) => row['cong_thuc_id'] as String).toList();
     } catch (_) {
       return memoryList;
     }
@@ -408,17 +455,20 @@ class RecipeRepository {
     if (_isMockUser(userId)) {
       return Stream.value(memoryList);
     }
-    return _savedRef(userId)
-        .snapshots()
-        .map((snap) => snap.docs.map((doc) => doc.id).toList())
+    return _supabase
+        .from('cong_thuc_da_luu')
+        .stream(primaryKey: ['user_id', 'cong_thuc_id'])
+        .eq('user_id', userId)
+        .map((rows) => rows.map((row) => row['cong_thuc_id'] as String).toList())
         .handleError((_) => memoryList);
   }
 
-  /// Seeds initial recipes into Firestore if the collection is empty.
+  /// Seeds initial recipes into Supabase if the table is empty.
   Future<void> seedInitialRecipesIfEmpty() async {
     try {
-      final snap = await _recipesRef.limit(1).get();
-      if (snap.docs.isEmpty) {
+      final rows = await _supabase.from('cong_thuc').select().limit(1);
+      final List<Map<String, dynamic>> data = List<Map<String, dynamic>>.from(rows);
+      if (data.isEmpty) {
         for (final recipe in RecipeMockData.initialRecipes) {
           final ingList = RecipeMockData.initialIngredients[recipe.id] ?? const [];
           await createRecipe(recipe: recipe, ingredients: ingList);
@@ -450,7 +500,7 @@ class RecipeRepository {
   }
 
   List<Recipe> _filterRecipes(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {
+    List<Map<String, dynamic>> rows, {
     required String userId,
     required String query,
     RecipeSource? sourceFilter,
@@ -459,9 +509,8 @@ class RecipeRepository {
     final lowerQuery = query.trim().toLowerCase();
     final result = <Recipe>[];
 
-    for (final doc in docs) {
-      final data = doc.data();
-      final recipe = Recipe.fromMap(_normalizeMap(data), id: doc.id);
+    for (final row in rows) {
+      final recipe = Recipe.fromMap(_normalizeMap(row), id: row['id'] as String);
 
       if (!recipe.canUserAccess(userId)) continue;
       if (sourceFilter != null && recipe.source != sourceFilter) continue;
@@ -473,14 +522,5 @@ class RecipeRepository {
     }
 
     return result;
-  }
-
-  Map<String, Object?> _normalizeMap(Map<String, dynamic> raw) {
-    return raw.map((key, value) {
-      if (value is Timestamp) {
-        return MapEntry(key, value.toDate());
-      }
-      return MapEntry(key, value);
-    });
   }
 }

@@ -1,60 +1,82 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'models/food_item.dart';
 import 'models/food_batch.dart';
 import 'models/stock_movement.dart';
 import 'pantry_mock_data.dart';
 
 /// Repository quản lý kho thực phẩm (MOD-01: Quản lý Kho - Nguyễn Văn Định)
-/// Triển khai đầy đủ Cloud Firestore user-scoped: `/users/{uid}/...`
+/// Triển khai đầy đủ Supabase (PostgreSQL) user-scoped.
 /// Khớp 100% với hợp đồng dữ liệu FEFO của MOD-04 (Hồ Nguyên Khởi) và MOD-02 (Nguyễn Vĩnh Hưng)
 class PantryRepository {
-  PantryRepository({FirebaseFirestore? firestore})
-      : _customFirestore = firestore;
+  PantryRepository({SupabaseClient? supabaseClient})
+      : _customClient = supabaseClient;
 
-  final FirebaseFirestore? _customFirestore;
-  FirebaseFirestore get _firestore =>
-      _customFirestore ?? FirebaseFirestore.instance;
+  final SupabaseClient? _customClient;
+  SupabaseClient get _client => _customClient ?? Supabase.instance.client;
 
   // Bộ nhớ đệm cục bộ (Fallback/Offline/Mock Testing)
   static final List<FoodItem> _memoryFoods = List.from(PantryMockData.initialFoods);
   static final List<FoodBatch> _memoryBatches = List.from(PantryMockData.initialBatches);
   static final List<StockMovement> _memoryMovements = List.from(PantryMockData.initialMovements);
 
-  CollectionReference<Map<String, dynamic>> _userPantryRef(String userId) {
-    return _firestore.collection('users').doc(userId).collection('thuc_pham');
-  }
-
-  CollectionReference<Map<String, dynamic>> _userBatchesRef(String userId) {
-    return _firestore.collection('users').doc(userId).collection('lo_thuc_pham');
-  }
-
-  CollectionReference<Map<String, dynamic>> _userMovementsRef(String userId) {
-    return _firestore.collection('users').doc(userId).collection('bien_dong_kho');
-  }
-
-  CollectionReference<Map<String, dynamic>> _userLocationsRef(String userId) {
-    return _firestore.collection('users').doc(userId).collection('vi_tri_luu_tru');
-  }
-
   bool _isMockUser(String userId) =>
       userId.isEmpty || userId.startsWith('mock_') || userId.startsWith('guest_');
 
   // =========================================================================
-  // 1. QUẢN LÝ THỰC PHẨM (thuc_pham)
+  // 1. QUẢN LÝ THỰC PHẨM (thuc_pham_global)
   // =========================================================================
 
   /// Stream danh sách thực phẩm trong kho (MOD-01)
-  /// Phân lập dữ liệu hoàn toàn theo userId: `/users/{uid}/thuc_pham`
+  /// Dữ liệu phân lập hoàn toàn theo userId thông qua bảng lo_thuc_pham
   Stream<List<FoodItem>> watchFoodItems(String userId) {
     if (_isMockUser(userId)) {
       return Stream.value(List.unmodifiable(_memoryFoods));
     }
 
-    return _userPantryRef(userId).snapshots().map((snapshot) {
-      return snapshot.docs
-          .map((doc) => FoodItem.fromMap(doc.id, doc.data()))
-          .toList();
-    }).handleError((_) => const <FoodItem>[]);
+    // Build a stream of distinct food items from lo_thuc_pham batches
+    return _client
+        .from('lo_thuc_pham')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .map((rows) {
+          // Group batches by thuc_pham_id to build FoodItem aggregates
+          final Map<String, List<Map<String, dynamic>>> grouped = {};
+          for (final row in rows) {
+            final foodId = row['thuc_pham_id'] as String? ?? '';
+            if (foodId.isEmpty) continue;
+            grouped.putIfAbsent(foodId, () => []).add(row);
+          }
+
+          return grouped.entries.map((entry) {
+            final foodId = entry.key;
+            final batches = entry.value;
+            final firstBatch = batches.first;
+            double totalStock = 0.0;
+            DateTime? closestExpiry;
+
+            for (final b in batches) {
+              final qty = (b['so_luong'] as num?)?.toDouble() ?? 0.0;
+              if (qty <= 0) continue;
+              totalStock += qty;
+              final expStr = b['ngay_het_han'] as String?;
+              if (expStr != null) {
+                final exp = DateTime.tryParse(expStr);
+                if (exp != null && (closestExpiry == null || exp.isBefore(closestExpiry))) {
+                  closestExpiry = exp;
+                }
+              }
+            }
+
+            return FoodItem(
+              id: foodId,
+              name: firstBatch['ten_thuc_pham'] as String? ?? '',
+              categoryName: '',
+              baseUnit: firstBatch['don_vi'] as String? ?? '',
+              totalStock: totalStock,
+              closestExpiryDate: closestExpiry,
+            );
+          }).toList();
+        });
   }
 
   /// Lấy chi tiết 1 thực phẩm theo ID
@@ -67,11 +89,45 @@ class PantryRepository {
     }
 
     try {
-      final doc = await _userPantryRef(userId).doc(foodId).get();
-      if (!doc.exists || doc.data() == null) {
-        return null;
+      // Fetch from thuc_pham_global
+      final row = await _client
+          .from('thuc_pham_global')
+          .select()
+          .eq('id', foodId)
+          .maybeSingle();
+
+      if (row == null) return null;
+
+      // Aggregate stock from lo_thuc_pham
+      final batches = await _client
+          .from('lo_thuc_pham')
+          .select()
+          .eq('user_id', userId)
+          .eq('thuc_pham_id', foodId);
+
+      double totalStock = 0.0;
+      DateTime? closestExpiry;
+      for (final b in batches) {
+        final qty = (b['so_luong'] as num?)?.toDouble() ?? 0.0;
+        if (qty <= 0) continue;
+        totalStock += qty;
+        final expStr = b['ngay_het_han'] as String?;
+        if (expStr != null) {
+          final exp = DateTime.tryParse(expStr);
+          if (exp != null && (closestExpiry == null || exp.isBefore(closestExpiry))) {
+            closestExpiry = exp;
+          }
+        }
       }
-      return FoodItem.fromMap(doc.id, doc.data()!);
+
+      return FoodItem(
+        id: row['id'] as String,
+        name: row['ten'] as String? ?? '',
+        categoryName: row['ten_danh_muc'] as String? ?? '',
+        baseUnit: row['don_vi_co_so'] as String? ?? '',
+        totalStock: totalStock,
+        closestExpiryDate: closestExpiry,
+      );
     } catch (_) {
       return null;
     }
@@ -89,17 +145,19 @@ class PantryRepository {
       return Stream.value(list);
     }
 
-    return _userBatchesRef(userId)
-        .where('ma_thuc_pham', isEqualTo: foodId)
-        .snapshots()
-        .map((snapshot) {
-      final batches = snapshot.docs
-          .map((doc) => FoodBatch.fromMap(doc.id, doc.data()))
-          .where((b) => b.quantity > 0)
-          .toList();
-      batches.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
-      return batches;
-    }).handleError((_) => const <FoodBatch>[]);
+    return _client
+        .from('lo_thuc_pham')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .map((rows) {
+          final batches = rows
+              .where((row) => row['thuc_pham_id'] == foodId)
+              .map((row) => FoodBatch.fromMap(row['id'] as String, row))
+              .where((b) => b.quantity > 0)
+              .toList();
+          batches.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
+          return batches;
+        });
   }
 
   /// Stream danh sách toàn bộ các lô đang có trong kho sắp xếp theo FEFO
@@ -110,21 +168,25 @@ class PantryRepository {
       return Stream.value(list);
     }
 
-    return _userBatchesRef(userId).snapshots().map((snapshot) {
-      final batches = snapshot.docs
-          .map((doc) => FoodBatch.fromMap(doc.id, doc.data()))
-          .where((b) => b.quantity > 0)
-          .toList();
-      batches.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
-      return batches;
-    }).handleError((_) => const <FoodBatch>[]);
+    return _client
+        .from('lo_thuc_pham')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .map((rows) {
+          final batches = rows
+              .map((row) => FoodBatch.fromMap(row['id'] as String, row))
+              .where((b) => b.quantity > 0)
+              .toList();
+          batches.sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
+          return batches;
+        });
   }
 
   // =========================================================================
   // 3. THÊM LÔ MỚI & ĐỒNG BỘ MUA SẮM (IN - bien_dong_kho)
   // =========================================================================
 
-  /// Thêm một lô thực phẩm vào kho (Thực hiện Firestore WriteBatch nguyên tử)
+  /// Thêm một lô thực phẩm vào kho (Supabase sequential writes)
   Future<void> addFoodBatch({
     required String userId,
     required String foodName,
@@ -153,87 +215,66 @@ class PantryRepository {
       return;
     }
 
-    // 1. Tìm thuc_pham hiện có ngoài transaction để tránh giới hạn Query trong transaction
-    final querySnap = await _userPantryRef(userId)
-        .where('ten_thuc_pham', isEqualTo: trimmedName)
-        .limit(1)
-        .get();
+    // 1. Tìm thuc_pham_global hiện có
+    final existingRows = await _client
+        .from('thuc_pham_global')
+        .select()
+        .eq('ten', trimmedName)
+        .limit(1);
 
-    final batch = _firestore.batch();
     String foodId;
 
-    if (querySnap.docs.isNotEmpty) {
-      final foodDoc = querySnap.docs.first;
-      foodId = foodDoc.id;
-      final currentStock = (foodDoc.data()['so_luong_ton'] as num?)?.toDouble() ?? 0.0;
-      final newStock = currentStock + quantity;
-
-      // Cập nhật ngày hết hạn gần nhất nếu lô mới có hạn sớm hơn
-      DateTime? closestExp;
-      final expStr = foodDoc.data()['han_su_dung_gan_nhat'] as String?;
-      if (expStr != null) {
-        closestExp = DateTime.tryParse(expStr);
-      }
-      if (closestExp == null || expiryDate.isBefore(closestExp)) {
-        closestExp = expiryDate;
-      }
-
-      batch.update(foodDoc.reference, {
-        'so_luong_ton': newStock,
-        'han_su_dung_gan_nhat': closestExp.toIso8601String(),
+    if (existingRows.isNotEmpty) {
+      foodId = existingRows.first['id'] as String;
+      // Cập nhật thông tin danh mục/đơn vị nếu cần
+      await _client.from('thuc_pham_global').update({
         'ten_danh_muc': categoryName,
         'don_vi_co_so': baseUnit,
-      });
+      }).eq('id', foodId);
     } else {
-      final newFoodRef = _userPantryRef(userId).doc();
-      foodId = newFoodRef.id;
-      batch.set(newFoodRef, {
-        'ten_thuc_pham': trimmedName,
+      // Tạo thực phẩm mới trong thuc_pham_global
+      foodId = 'food_${DateTime.now().millisecondsSinceEpoch}';
+      await _client.from('thuc_pham_global').insert({
+        'id': foodId,
+        'ten': trimmedName,
         'ten_danh_muc': categoryName,
-        'loai_thuc_pham': categoryName,
         'don_vi_co_so': baseUnit,
-        'don_vi_chuan': baseUnit,
-        'so_luong_ton': quantity,
-        'nguong_sap_het': 1.0,
-        'muc_ton_toi_thieu': 1.0,
-        'han_su_dung_gan_nhat': expiryDate.toIso8601String(),
-        'ngay_tao': DateTime.now().toIso8601String(),
       });
     }
 
-    // 2. Tạo `lo_thuc_pham` mới
-    final batchRef = _userBatchesRef(userId).doc();
-    batch.set(batchRef, {
-      'ma_thuc_pham': foodId,
+    // 2. Tạo lô thực phẩm mới trong lo_thuc_pham (UUID auto-generated by DB)
+    final batchInsertResult = await _client.from('lo_thuc_pham').insert({
+      'user_id': userId,
+      'thuc_pham_id': foodId,
       'ten_thuc_pham': trimmedName,
-      'ten_vi_tri': locationName,
-      'ngay_nhap': DateTime.now().toIso8601String(),
-      'han_su_dung': expiryDate.toIso8601String(),
       'so_luong': quantity,
-      'so_luong_ton': quantity,
       'don_vi': baseUnit,
-      if (note != null && note.isNotEmpty) 'ghi_chu': note,
-    });
+      'ngay_het_han': expiryDate.toIso8601String().substring(0, 10),
+      'vi_tri': locationName,
+      'ghi_chu': note ?? '',
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    }).select('id').single();
 
-    // 3. Ghi `bien_dong_kho` (loai = IN)
-    final movementRef = _userMovementsRef(userId).doc();
-    batch.set(movementRef, {
-      'ma_lo': batchRef.id,
+    final batchId = batchInsertResult['id'] as String;
+
+    // 3. Ghi biến động kho (loai = IN)
+    await _client.from('bien_dong_kho').insert({
+      'user_id': userId,
+      'thuc_pham_id': foodId,
+      'ten_thuc_pham': trimmedName,
       'loai_bien_dong': 'IN',
       'so_luong_nhap': quantity,
       'so_luong_xuat': 0.0,
-      'thoi_diem': DateTime.now().toIso8601String(),
       'ghi_chu': note ?? 'Nhập mới vào $locationName',
+      'created_at': DateTime.now().toUtc().toIso8601String(),
     });
-
-    await batch.commit();
   }
 
   // =========================================================================
   // 4. HỦY LÔ / BỎ THỰC PHẨM (DISCARD - bien_dong_kho)
   // =========================================================================
 
-  /// Hủy một lô thực phẩm hết hạn/hư hỏng (Giao dịch nguyên tử)
+  /// Hủy một lô thực phẩm hết hạn/hư hỏng (Sequential read + write)
   Future<void> discardBatch({
     required String userId,
     required String batchId,
@@ -267,42 +308,37 @@ class PantryRepository {
       return;
     }
 
-    await _firestore.runTransaction((txn) async {
-      final batchRef = _userBatchesRef(userId).doc(batchId);
-      final batchDoc = await txn.get(batchRef);
-      if (!batchDoc.exists) return;
+    // 1. Đọc lô hiện tại
+    final batchRow = await _client
+        .from('lo_thuc_pham')
+        .select()
+        .eq('id', batchId)
+        .eq('user_id', userId)
+        .maybeSingle();
 
-      final data = batchDoc.data()!;
-      final foodId = data['ma_thuc_pham'] as String? ?? '';
-      final qty = (data['so_luong_ton'] as num?)?.toDouble() ??
-          (data['so_luong'] as num?)?.toDouble() ??
-          0.0;
+    if (batchRow == null) return;
 
-      // 1. Giảm tồn kho FoodItem
-      if (foodId.isNotEmpty) {
-        final foodRef = _userPantryRef(userId).doc(foodId);
-        final foodDoc = await txn.get(foodRef);
-        if (foodDoc.exists) {
-          final cur = (foodDoc.data()?['so_luong_ton'] as num?)?.toDouble() ?? 0.0;
-          txn.update(foodRef, {
-            'so_luong_ton': (cur - qty).clamp(0.0, 999999.0),
-          });
-        }
-      }
+    final foodId = batchRow['thuc_pham_id'] as String? ?? '';
+    final foodName = batchRow['ten_thuc_pham'] as String? ?? '';
+    final qty = (batchRow['so_luong'] as num?)?.toDouble() ?? 0.0;
 
-      // 2. Cập nhật lô về 0 hoặc xóa
-      txn.update(batchRef, {'so_luong_ton': 0.0, 'so_luong': 0.0});
+    // 2. Cập nhật lô về 0
+    await _client
+        .from('lo_thuc_pham')
+        .update({'so_luong': 0.0})
+        .eq('id', batchId)
+        .eq('user_id', userId);
 
-      // 3. Ghi biến động DISCARD
-      final movRef = _userMovementsRef(userId).doc();
-      txn.set(movRef, {
-        'ma_lo': batchId,
-        'loai_bien_dong': 'DISCARD',
-        'so_luong_nhap': 0.0,
-        'so_luong_xuat': qty,
-        'thoi_diem': DateTime.now().toIso8601String(),
-        'ghi_chu': reason,
-      });
+    // 3. Ghi biến động DISCARD
+    await _client.from('bien_dong_kho').insert({
+      'user_id': userId,
+      'thuc_pham_id': foodId,
+      'ten_thuc_pham': foodName,
+      'loai_bien_dong': 'DISCARD',
+      'so_luong_nhap': 0.0,
+      'so_luong_xuat': qty,
+      'ghi_chu': reason,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
     });
   }
 
@@ -318,14 +354,17 @@ class PantryRepository {
       return Stream.value(list);
     }
 
-    return _userMovementsRef(userId)
-        .orderBy('thoi_diem', descending: true)
-        .snapshots()
-        .map((snapshot) {
-      return snapshot.docs
-          .map((doc) => StockMovement.fromMap(doc.id, doc.data()))
-          .toList();
-    }).handleError((_) => const <StockMovement>[]);
+    return _client
+        .from('bien_dong_kho')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .map((rows) {
+          final movements = rows
+              .map((row) => StockMovement.fromMap(row['id'] as String, row))
+              .toList();
+          movements.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          return movements;
+        });
   }
 
   // =========================================================================
@@ -344,9 +383,18 @@ class PantryRepository {
       return List.from(_defaultLocations);
     }
     try {
-      final snap = await _userLocationsRef(userId).get();
-      if (snap.docs.isEmpty) return List.from(_defaultLocations);
-      return snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+      final rows = await _client
+          .from('vi_tri_luu_tru')
+          .select()
+          .eq('user_id', userId);
+
+      if (rows.isEmpty) return List.from(_defaultLocations);
+
+      return rows.map<Map<String, dynamic>>((row) => {
+            'id': row['id'] as String,
+            'ten_vi_tri': row['ten'] as String? ?? '',
+            'mo_ta': row['mo_ta'] as String? ?? '',
+          }).toList();
     } catch (_) {
       return List.from(_defaultLocations);
     }
@@ -363,15 +411,15 @@ class PantryRepository {
       });
       return;
     }
-    await _userLocationsRef(userId).add({
-      'ten_vi_tri': trimmedName,
-      'mo_ta': description?.trim(),
-      'ngay_tao': DateTime.now().toIso8601String(),
+    await _client.from('vi_tri_luu_tru').insert({
+      'user_id': userId,
+      'ten': trimmedName,
+      'mo_ta': description?.trim() ?? '',
     });
   }
 
   // =========================================================================
-  // 7. CẤU HÌNH THỰC PHẨM & TỒN TỐI THIỂU (cau_hinh_thuc_pham)
+  // 7. CẤU HÌNH THỰC PHẨM & TỒN TỐI THIỂU (food_minimum_stock)
   // =========================================================================
 
   Future<void> updateFoodMinimumStock(String userId, String foodId, double minimumStock) async {
@@ -381,9 +429,10 @@ class PantryRepository {
     }
     if (_isMockUser(userId)) return;
     try {
-      await _userPantryRef(userId).doc(foodId).update({
-        'nguong_sap_het': minimumStock,
-        'muc_ton_toi_thieu': minimumStock,
+      await _client.from('food_minimum_stock').upsert({
+        'user_id': userId,
+        'thuc_pham_id': foodId,
+        'ton_kho_toi_thieu': minimumStock,
       });
     } catch (_) {
       // Ignored if offline
