@@ -1,5 +1,6 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -72,6 +73,8 @@ class FlutterLocalNotificationScheduler implements LocalNotificationScheduler {
 
   @override
   Future<bool> ensurePermission() async {
+    // Web build (Vercel demo): no OS notifications → in-app reminder only.
+    if (kIsWeb) return false;
     await _initIfNeeded();
     final androidImpl = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
@@ -117,6 +120,7 @@ class FlutterLocalNotificationScheduler implements LocalNotificationScheduler {
 
   @override
   Future<void> cancel(int id) async {
+    if (kIsWeb) return;
     await _initIfNeeded();
     await _plugin.cancel(id);
   }
@@ -127,27 +131,33 @@ class ReminderService {
   ReminderService({
     required MealRepository mealRepository,
     LocalNotificationScheduler? scheduler,
-    FirebaseFirestore? firestore,
+    SupabaseClient? supabase,
   })  : _mealRepository = mealRepository,
         _scheduler = scheduler ?? FlutterLocalNotificationScheduler(),
-        _customFirestore = firestore;
+        _customSupabase = supabase;
 
   final MealRepository _mealRepository;
   final LocalNotificationScheduler _scheduler;
-  final FirebaseFirestore? _customFirestore;
-  FirebaseFirestore get _firestore =>
-      _customFirestore ?? FirebaseFirestore.instance;
+  final SupabaseClient? _customSupabase;
+  SupabaseClient get _db => _customSupabase ?? Supabase.instance.client;
 
-  CollectionReference<Map<String, dynamic>> _notificationsRef(String userId) {
-    return _firestore.collection('users').doc(userId).collection('notifications');
-  }
+  static const String notificationsTable = 'thong_bao';
 
-  /// Deterministic document ID in `thong_bao` so rescheduling updates in place without duplicates.
+  static bool _isMockUser(String userId) =>
+      userId.isEmpty || userId.startsWith('mock_') || userId.startsWith('guest_');
+
+  /// In-memory reminders for guest/offline mode.
+  static final Map<String, MealReminderNotification> _memoryReminders = {};
+
+  /// Deterministic row ID in `thong_bao` so rescheduling updates in place without duplicates.
   static String notificationDocId(String mealId) => 'meal_reminder_$mealId';
+
+  static String _rowId(String userId, String mealId) =>
+      'meal_reminder_${userId}_$mealId';
 
   /// Stable 31-bit integer ID for `flutter_local_notifications` derived deterministically from [mealId].
   static int notificationIntId(String mealId) {
-    // Use FNV-1a instead of String.hashCode because Dart's hashCode is not guaranteed stable across restarts.
+    // FNV-1a instead of String.hashCode (not stable across restarts).
     var hash = 0x811c9dc5;
     for (final unit in mealId.codeUnits) {
       hash ^= unit;
@@ -159,7 +169,7 @@ class ReminderService {
   /// Schedules or updates a meal preparation reminder (`MOD-04-06`).
   ///
   /// Always saves an in-app `MEAL_REMINDER` record in `thong_bao`. If OS notification
-  /// permission is denied, gracefully falls back to in-app reminder only.
+  /// permission is denied (or running on web), falls back to in-app reminder only.
   Future<ReminderScheduleResult> scheduleMealReminder({
     required Meal meal,
     required DateTime reminderAt,
@@ -170,9 +180,7 @@ class ReminderService {
       );
     }
     if (!reminderAt.isAfter(DateTime.now())) {
-      throw const MealPlanException(
-        'Thời gian nhắc phải ở tương lai.',
-      );
+      throw const MealPlanException('Thời gian nhắc phải ở tương lai.');
     }
 
     await _mealRepository.updateMealReminder(
@@ -189,19 +197,24 @@ class ReminderService {
       scheduledAt: reminderAt,
     );
 
-    final hasPermission = await _scheduler.ensurePermission();
-    if (hasPermission) {
-      await _scheduler.schedule(
-        id: notificationIntId(meal.id),
-        title: 'Nhắc chuẩn bị bữa ${meal.slot.labelVi}',
-        body: message,
-        scheduledAt: reminderAt,
-      );
+    var osScheduled = false;
+    try {
+      if (await _scheduler.ensurePermission()) {
+        await _scheduler.schedule(
+          id: notificationIntId(meal.id),
+          title: 'Nhắc chuẩn bị bữa ${meal.slot.labelVi}',
+          body: message,
+          scheduledAt: reminderAt,
+        );
+        osScheduled = true;
+      }
+    } catch (_) {
+      osScheduled = false; // plugin unavailable → in-app only
     }
 
     return ReminderScheduleResult(
       reminderAt: reminderAt,
-      osNotificationScheduled: hasPermission,
+      osNotificationScheduled: osScheduled,
       inAppReminderSaved: true,
     );
   }
@@ -225,10 +238,22 @@ class ReminderService {
     required String userId,
     required String mealId,
   }) async {
-    await _scheduler.cancel(notificationIntId(mealId));
-    await _notificationsRef(userId).doc(notificationDocId(mealId)).delete();
+    try {
+      await _scheduler.cancel(notificationIntId(mealId));
+    } catch (_) {}
 
-    final meal = await _mealRepository.getMealById(userId: userId, mealId: mealId);
+    _memoryReminders.remove(_rowId(userId, mealId));
+    if (!_isMockUser(userId)) {
+      try {
+        await _db
+            .from(notificationsTable)
+            .delete()
+            .eq('id', _rowId(userId, mealId));
+      } catch (_) {}
+    }
+
+    final meal =
+        await _mealRepository.getMealById(userId: userId, mealId: mealId);
     if (meal != null && meal.isPlanned && meal.reminderAt != null) {
       await _mealRepository.updateMealReminder(
         userId: userId,
@@ -240,16 +265,27 @@ class ReminderService {
 
   /// Streams unread in-app `MEAL_REMINDER` records whose trigger time has arrived.
   Stream<List<MealReminderNotification>> watchDueInAppReminders(String userId) {
-    return _notificationsRef(userId)
-        .where('loai', isEqualTo: 'MEAL_REMINDER')
-        .snapshots()
-        .map((snapshot) {
+    List<MealReminderNotification> due(Iterable<MealReminderNotification> all) {
       final now = DateTime.now();
-      return snapshot.docs
-          .map((doc) => _mapNotification(doc.id, doc.data()))
+      return all
           .where((n) => !n.isRead && !n.scheduledAt.isAfter(now))
           .toList();
-    });
+    }
+
+    if (_isMockUser(userId)) {
+      return Stream.value(
+        due(_memoryReminders.values.where((n) => n.userId == userId)),
+      );
+    }
+
+    return _db
+        .from(notificationsTable)
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .map((rows) => due(rows
+            .where((r) => r['loai'] == 'MEAL_REMINDER')
+            .map(_mapNotification)))
+        .handleError((_) => <MealReminderNotification>[]);
   }
 
   /// Marks an in-app `MEAL_REMINDER` as read (`da_doc = true`).
@@ -257,7 +293,24 @@ class ReminderService {
     required String userId,
     required String notificationId,
   }) async {
-    await _notificationsRef(userId).doc(notificationId).update({'da_doc': true});
+    final mem = _memoryReminders[notificationId];
+    if (mem != null) {
+      _memoryReminders[notificationId] = MealReminderNotification(
+        id: mem.id,
+        userId: mem.userId,
+        mealId: mem.mealId,
+        message: mem.message,
+        scheduledAt: mem.scheduledAt,
+        isRead: true,
+      );
+    }
+    if (_isMockUser(userId)) return;
+
+    try {
+      await _db
+          .from(notificationsTable)
+          .update({'da_doc': true}).eq('id', notificationId);
+    } catch (_) {}
   }
 
   Future<void> _upsertNotificationRecord({
@@ -266,15 +319,30 @@ class ReminderService {
     required String message,
     required DateTime scheduledAt,
   }) async {
-    await _notificationsRef(userId).doc(notificationDocId(mealId)).set({
-      'ma_tai_khoan': userId,
-      'ma_lo': null,
-      'ma_bua_an': mealId,
-      'loai': 'MEAL_REMINDER',
-      'noi_dung': message,
-      'thoi_diem_gui': scheduledAt.toIso8601String(),
-      'da_doc': false,
-    });
+    final id = _rowId(userId, mealId);
+    _memoryReminders[id] = MealReminderNotification(
+      id: id,
+      userId: userId,
+      mealId: mealId,
+      message: message,
+      scheduledAt: scheduledAt,
+      isRead: false,
+    );
+    if (_isMockUser(userId)) return;
+
+    try {
+      await _db.from(notificationsTable).upsert({
+        'id': id,
+        'user_id': userId,
+        'meal_id': MealRepository.rowMealId(userId, mealId),
+        'loai': 'MEAL_REMINDER',
+        'noi_dung': message,
+        'thoi_diem_gui': scheduledAt.toUtc().toIso8601String(),
+        'da_doc': false,
+      });
+    } catch (_) {
+      // Keep the in-memory reminder so the demo still works offline.
+    }
   }
 
   static String _buildReminderMessage(Meal meal) {
@@ -284,24 +352,18 @@ class ReminderService {
     return 'Đến giờ chuẩn bị bữa ${meal.slot.labelVi} ngày $dateText.';
   }
 
-  static MealReminderNotification _mapNotification(
-    String id,
-    Map<String, dynamic> data,
-  ) {
+  static MealReminderNotification _mapNotification(Map<String, dynamic> data) {
+    final userId = data['user_id'] as String? ?? '';
     final rawTime = data['thoi_diem_gui'];
-    final DateTime scheduledAt;
-    if (rawTime is Timestamp) {
-      scheduledAt = rawTime.toDate();
-    } else if (rawTime is String) {
-      scheduledAt = DateTime.parse(rawTime);
-    } else {
-      scheduledAt = DateTime.now();
-    }
+    final scheduledAt = rawTime is String
+        ? DateTime.parse(rawTime).toLocal()
+        : DateTime.now();
+    final rowMealId = data['meal_id'] as String? ?? '';
 
     return MealReminderNotification(
-      id: id,
-      userId: data['ma_tai_khoan'] as String? ?? '',
-      mealId: data['ma_bua_an'] as String? ?? '',
+      id: data['id'] as String? ?? '',
+      userId: userId,
+      mealId: MealRepository.appMealId(userId, rowMealId),
       message: data['noi_dung'] as String? ?? '',
       scheduledAt: scheduledAt,
       isRead: data['da_doc'] as bool? ?? false,
