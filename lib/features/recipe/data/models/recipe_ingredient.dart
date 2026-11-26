@@ -78,18 +78,14 @@ class RecipeIngredient {
     };
   }
 
-  /// Deserializes a map into [RecipeIngredient].
+  /// Deserializes a map into [RecipeIngredient] (supports both Firestore & Supabase row keys).
   factory RecipeIngredient.fromMap(Map<String, Object?> map, {required String id}) {
-    final rawRecipeId = map['ma_cong_thuc'] as String? ?? '';
-    final rawFoodId = map['ma_thuc_pham'] as String? ?? id;
-    final rawFoodName = map['ten_thuc_pham'] as String? ?? 'Nguyên liệu';
-    final rawUnitId = map['ma_don_vi'] as String? ?? '';
-    final rawUnitSymbol = map['ky_hieu_don_vi'] as String? ?? map['ten_don_vi'] as String? ?? rawUnitId;
-    final rawQuantity = (map['so_luong'] as num?)?.toDouble();
-
-    if (rawQuantity == null || rawQuantity <= 0) {
-      throw FormatException('Invalid or missing so_luong in RecipeIngredient for id=$id');
-    }
+    final rawRecipeId = (map['ma_cong_thuc'] ?? map['cong_thuc_id']) as String? ?? '';
+    final rawFoodId = (map['ma_thuc_pham'] ?? map['thuc_pham_id']) as String? ?? id;
+    final rawFoodName = (map['ten_thuc_pham'] as String?) ?? 'Nguyên liệu';
+    final rawUnitId = (map['ma_don_vi'] ?? map['don_vi_id']) as String? ?? '';
+    final rawUnitSymbol = (map['ky_hieu_don_vi'] ?? map['ten_don_vi']) as String? ?? 'g';
+    final rawQuantity = ((map['so_luong'] ?? map['so_luong_co_so']) as num?)?.toDouble() ?? 1.0;
 
     return RecipeIngredient(
       id: id,
