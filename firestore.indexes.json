@@ -1,0 +1,36 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "meals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ma_tai_khoan", "order": "ASCENDING" },
+        { "fieldPath": "ngay_an", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "lo_thuc_pham",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ma_thuc_pham", "order": "ASCENDING" },
+        { "fieldPath": "han_su_dung", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "bien_dong_kho",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "thoi_diem", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "danh_sach_mua",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ma_tai_khoan", "order": "ASCENDING" },
+        { "fieldPath": "ngay_tao", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

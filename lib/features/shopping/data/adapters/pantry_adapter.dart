@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Projection of food metadata owned by MOD-01 (`thuc_pham`).
 class PantryFoodInfo {
@@ -71,7 +71,7 @@ class MeasurementUnitInfo {
   }
 }
 
-/// Projection of low-stock configuration owned by MOD-01 (`cau_hinh_thuc_pham`).
+/// Projection of low-stock configuration owned by MOD-01 (`food_minimum_stock`).
 class FoodStockConfigInfo {
   const FoodStockConfigInfo({
     required this.foodId,
@@ -131,58 +131,74 @@ abstract interface class PantryReader {
   });
 }
 
-/// Abstract contract for atomic pantry synchronization (`MOD-01-07`).
+/// Abstract contract for pantry synchronization (`MOD-01-07`).
 abstract interface class PantrySyncWriter {
   /// Writes newly purchased lots and records 'IN' movements in `bien_dong_kho`.
-  Future<void> importBatchesInTransaction({
+  Future<void> importBatches({
     required String userId,
-    required Transaction transaction,
     required List<NewPantryBatchPayload> batches,
   });
 }
 
-/// Default Firestore implementation connecting to MOD-01 collections.
-class FirestorePantryAdapter implements PantryReader, PantrySyncWriter {
-  FirestorePantryAdapter({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+/// Default Supabase implementation connecting to MOD-01 collections.
+class SupabasePantryAdapter implements PantryReader, PantrySyncWriter {
+  SupabasePantryAdapter({SupabaseClient? supabase})
+      : _customSupabase = supabase;
 
-  final FirebaseFirestore _firestore;
+  final SupabaseClient? _customSupabase;
+  SupabaseClient get _supabase =>
+      _customSupabase ?? Supabase.instance.client;
 
   @override
   Future<List<StorageLocationInfo>> getStorageLocations(String userId) async {
-    final snapshot = await _firestore
-        .collection('users')
-        .doc(userId)
-        .collection('vi_tri_luu_tru')
-        .get();
+    const defaultLocations = [
+      StorageLocationInfo(id: 'loc_1', name: 'Ngăn mát tủ lạnh', description: 'Nhiệt độ 2°C - 5°C'),
+      StorageLocationInfo(id: 'loc_2', name: 'Ngăn đông đá', description: 'Nhiệt độ dưới -18°C'),
+      StorageLocationInfo(id: 'loc_3', name: 'Tủ gia vị khô', description: 'Nơi thoáng mát'),
+      StorageLocationInfo(id: 'loc_4', name: 'Hộc rau quả', description: 'Độ ẩm cao'),
+    ];
 
-    return snapshot.docs.map((doc) {
-      final data = doc.data();
-      return StorageLocationInfo(
-        id: doc.id,
-        name: data['ten_vi_tri'] as String? ?? 'Vị trí mặc định',
-        description: data['mo_ta'] as String?,
-      );
-    }).toList();
+    if (userId.isEmpty || userId.startsWith('mock_') || userId.startsWith('guest_')) {
+      return defaultLocations;
+    }
+
+    try {
+      final rows = await _supabase
+          .from('vi_tri_luu_tru')
+          .select()
+          .eq('user_id', userId);
+
+      if ((rows as List).isEmpty) {
+        return defaultLocations;
+      }
+
+      return rows.map((row) {
+        final data = row as Map<String, dynamic>;
+        return StorageLocationInfo(
+          id: data['id'] as String? ?? '',
+          name: data['ten'] as String? ?? 'Vị trí mặc định',
+          description: data['mo_ta'] as String?,
+        );
+      }).toList();
+    } catch (_) {
+      return defaultLocations;
+    }
   }
 
   @override
   Future<List<PantryFoodInfo>> getFoods(String userId) async {
-    // Check both user-scoped food collection and shared food collection
-    final snapshot = await _firestore
-        .collection('users')
-        .doc(userId)
-        .collection('thuc_pham')
-        .get();
+    // Query global food catalog
+    final rows = await _supabase
+        .from('thuc_pham_global')
+        .select();
 
-    if (snapshot.docs.isNotEmpty) {
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
+    if ((rows as List).isNotEmpty) {
+      return rows.map((row) {
+        final data = row as Map<String, dynamic>;
         return PantryFoodInfo(
-          id: doc.id,
-          name: data['ten_thuc_pham'] as String? ?? 'Thực phẩm',
-          baseUnitId: data['ma_don_vi_co_so']?.toString() ?? '1',
-          categoryId: data['ma_danh_muc']?.toString(),
+          id: data['id'] as String? ?? '',
+          name: data['ten'] as String? ?? 'Thực phẩm',
+          baseUnitId: data['don_vi_co_so']?.toString() ?? '1',
           categoryName: data['ten_danh_muc'] as String?,
           barcode: data['ma_vach'] as String?,
           imageUrl: data['hinh_anh'] as String?,
@@ -190,31 +206,21 @@ class FirestorePantryAdapter implements PantryReader, PantrySyncWriter {
       }).toList();
     }
 
-    // Fallback: check shared root collection
-    final rootSnap = await _firestore.collection('thuc_pham').get();
-    return rootSnap.docs.map((doc) {
-      final data = doc.data();
-      return PantryFoodInfo(
-        id: doc.id,
-        name: data['ten_thuc_pham'] as String? ?? 'Thực phẩm',
-        baseUnitId: data['ma_don_vi_co_so']?.toString() ?? '1',
-        categoryId: data['ma_danh_muc']?.toString(),
-        categoryName: data['ten_danh_muc'] as String?,
-        barcode: data['ma_vach'] as String?,
-        imageUrl: data['hinh_anh'] as String?,
-      );
-    }).toList();
+    return [];
   }
 
   @override
   Future<List<MeasurementUnitInfo>> getUnits() async {
-    final snapshot = await _firestore.collection('don_vi').get();
-    if (snapshot.docs.isNotEmpty) {
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
+    final rows = await _supabase
+        .from('don_vi')
+        .select();
+
+    if ((rows as List).isNotEmpty) {
+      return rows.map((row) {
+        final data = row as Map<String, dynamic>;
         return MeasurementUnitInfo(
-          id: doc.id,
-          name: data['ten_don_vi'] as String? ?? doc.id,
+          id: data['id'] as String? ?? '',
+          name: data['ten'] as String? ?? data['id'] as String? ?? '',
           symbol: data['ky_hieu'] as String? ?? '',
           measurementGroup: data['nhom_do_luong'] as String? ?? 'MASS',
           toBaseFactor: (data['he_so_quy_doi'] as num?)?.toDouble() ?? 1.0,
@@ -271,17 +277,16 @@ class FirestorePantryAdapter implements PantryReader, PantrySyncWriter {
 
   @override
   Future<List<FoodStockConfigInfo>> getStockConfigs(String userId) async {
-    final snapshot = await _firestore
-        .collection('users')
-        .doc(userId)
-        .collection('cau_hinh_thuc_pham')
-        .get();
+    final rows = await _supabase
+        .from('food_minimum_stock')
+        .select()
+        .eq('user_id', userId);
 
-    return snapshot.docs.map((doc) {
-      final data = doc.data();
+    return (rows as List).map((row) {
+      final data = row as Map<String, dynamic>;
       return FoodStockConfigInfo(
-        foodId: data['ma_thuc_pham']?.toString() ?? doc.id,
-        threshold: (data['nguong_sap_het'] as num?)?.toDouble() ?? 0.0,
+        foodId: data['thuc_pham_id']?.toString() ?? '',
+        threshold: (data['ton_kho_toi_thieu'] as num?)?.toDouble() ?? 0.0,
         suggestedBuyQuantity:
             (data['so_luong_mua_de_xuat'] as num?)?.toDouble() ?? 1.0,
         autoAdd: data['tu_dong_them_mua_sam'] as bool? ?? false,
@@ -303,20 +308,20 @@ class FirestorePantryAdapter implements PantryReader, PantrySyncWriter {
     final refKey =
         '${refMidnight.year.toString().padLeft(4, '0')}-${refMidnight.month.toString().padLeft(2, '0')}-${refMidnight.day.toString().padLeft(2, '0')}';
 
-    // 1. Get all batches for foodId
-    final batchesSnap = await _firestore
-        .collection('users')
-        .doc(userId)
-        .collection('lo_thuc_pham')
-        .where('ma_thuc_pham', isEqualTo: foodId)
-        .get();
+    // 1. Get all batches for foodId with expiry >= refKey
+    final batchRows = await _supabase
+        .from('lo_thuc_pham')
+        .select()
+        .eq('user_id', userId)
+        .eq('thuc_pham_id', foodId)
+        .gte('ngay_het_han', refKey);
 
     final usableBatchIds = <String>{};
-    for (final doc in batchesSnap.docs) {
-      final data = doc.data();
-      final expRaw = data['han_su_dung']?.toString() ?? '';
-      if (expRaw.compareTo(refKey) >= 0) {
-        usableBatchIds.add(doc.id);
+    for (final row in (batchRows as List)) {
+      final data = row as Map<String, dynamic>;
+      final batchId = data['id']?.toString();
+      if (batchId != null) {
+        usableBatchIds.add(batchId);
       }
     }
 
@@ -324,15 +329,15 @@ class FirestorePantryAdapter implements PantryReader, PantrySyncWriter {
 
     // 2. Query ledger movements for usable batches:
     // Tồn = SUM(so_luong_nhap) - SUM(so_luong_xuat)
-    final movementsSnap = await _firestore
-        .collection('users')
-        .doc(userId)
-        .collection('bien_dong_kho')
-        .get();
+    final movementRows = await _supabase
+        .from('bien_dong_kho')
+        .select()
+        .eq('user_id', userId)
+        .eq('thuc_pham_id', foodId);
 
     var totalBalance = 0.0;
-    for (final doc in movementsSnap.docs) {
-      final data = doc.data();
+    for (final row in (movementRows as List)) {
+      final data = row as Map<String, dynamic>;
       final batchId = data['ma_lo']?.toString();
       if (batchId != null && usableBatchIds.contains(batchId)) {
         final inQty = (data['so_luong_nhap'] as num?)?.toDouble() ?? 0.0;
@@ -345,42 +350,45 @@ class FirestorePantryAdapter implements PantryReader, PantrySyncWriter {
   }
 
   @override
-  Future<void> importBatchesInTransaction({
+  Future<void> importBatches({
     required String userId,
-    required Transaction transaction,
     required List<NewPantryBatchPayload> batches,
   }) async {
-    final batchesColl =
-        _firestore.collection('users').doc(userId).collection('lo_thuc_pham');
-    final movementsColl =
-        _firestore.collection('users').doc(userId).collection('bien_dong_kho');
-
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc().toIso8601String();
 
     for (final b in batches) {
-      // 1. Create lot document (`lo_thuc_pham`)
-      final newBatchRef = batchesColl.doc();
-      transaction.set(newBatchRef, {
-        'ma_thuc_pham': b.foodId,
-        'ma_vi_tri': b.locationId,
-        'ngay_nhap': b.importDate.toIso8601String(),
-        'han_su_dung': b.expiryDate.toIso8601String(),
-        'so_luong_ton': b.quantity,
-      });
+      // 1. Create lot row (`lo_thuc_pham`)
+      final batchResult = await _supabase
+          .from('lo_thuc_pham')
+          .insert({
+            'user_id': userId,
+            'thuc_pham_id': b.foodId,
+            'ten_thuc_pham': b.shoppingListName,
+            'vi_tri': b.locationId,
+            'ngay_het_han': b.expiryDate.toIso8601String().substring(0, 10),
+            'so_luong': b.quantity,
+            'don_vi': '',
+            'ghi_chu': 'Nhập kho từ danh sách mua sắm: ${b.shoppingListName}',
+            'created_at': now,
+          })
+          .select('id')
+          .single();
+
+      final newBatchId = batchResult['id'] as String;
 
       // 2. Record ledger movement ('IN')
-      final movementRef = movementsColl.doc();
-      transaction.set(movementRef, {
-        'ma_lo': newBatchRef.id,
+      await _supabase.from('bien_dong_kho').insert({
+        'user_id': userId,
+        'thuc_pham_id': b.foodId,
+        'ten_thuc_pham': b.shoppingListName,
+        'ma_lo': newBatchId,
         'ma_chi_tiet_mua': b.shoppingItemId,
-        'ma_mon_an': null,
         'loai_bien_dong': 'IN',
         'so_luong_nhap': b.quantity,
         'so_luong_xuat': 0.0,
-        'thoi_diem': now.toIso8601String(),
         'ghi_chu': 'Nhập kho từ danh sách mua sắm: ${b.shoppingListName}',
+        'created_at': now,
       });
     }
   }
 }
-

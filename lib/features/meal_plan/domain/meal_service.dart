@@ -1,10 +1,13 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../pantry/data/models/food_item.dart';
+import '../../pantry/data/pantry_mock_data.dart';
+import '../../recipe/data/recipe_mock_data.dart';
 import '../data/meal_repository.dart';
 import '../data/models/meal.dart';
 import '../data/models/meal_item.dart';
 
-/// Read-only projection of a recipe (`cong_thuc`, owned by `MOD-03`).
+/// Read-only projection of a recipe (`cong_thuc`, owned by MOD-03).
 class RecipeSummary {
   const RecipeSummary({
     required this.id,
@@ -24,7 +27,7 @@ class RecipeSummary {
   final int cookingMinutes;
   final String? imageUrl;
 
-  /// Enforces recipe access control (`MOD-04-03`).
+  /// Enforces recipe access control (MOD-04-03).
   bool canUserAccess(String userId) {
     final normalized = visibility.trim().toUpperCase();
     return normalized == 'PUBLIC' ||
@@ -33,7 +36,7 @@ class RecipeSummary {
   }
 }
 
-/// Read-only projection of a recipe ingredient (`nguyen_lieu_cong_thuc`, owned by `MOD-03`).
+/// Read-only projection of a recipe ingredient (`nguyen_lieu_cong_thuc`, owned by MOD-03).
 class RecipeIngredientDto {
   const RecipeIngredientDto({
     required this.foodId,
@@ -48,7 +51,7 @@ class RecipeIngredientDto {
   final double quantity;
 }
 
-/// Read-only projection of a food item (`thuc_pham`, owned by `MOD-01`).
+/// Read-only projection of a food item (`thuc_pham`, owned by MOD-01).
 class FoodSummary {
   const FoodSummary({
     required this.id,
@@ -63,7 +66,7 @@ class FoodSummary {
   final String? imageUrl;
 }
 
-/// Read-only projection of a measurement unit (`don_vi`, owned by `MOD-01`).
+/// Read-only projection of a measurement unit (`don_vi`, owned by MOD-01).
 class UnitInfo {
   const UnitInfo({
     required this.id,
@@ -83,17 +86,16 @@ class UnitInfo {
   /// Multiplier to convert a value in this unit into the group's base unit.
   final double toBaseFactor;
 
-  /// Checks whether this unit can convert to [baseUnit] (`MOD-04-04`).
+  /// Checks whether this unit can convert to [baseUnit] (MOD-04-04).
   bool isConvertibleTo(UnitInfo baseUnit) {
     if (id == baseUnit.id) return true;
     final groupA = measurementGroup.trim().toUpperCase();
     final groupB = baseUnit.measurementGroup.trim().toUpperCase();
-    // Discrete count units (e.g. quả vs gói) require an exact unit match unless converted externally.
     return groupA == groupB && groupA != 'COUNT';
   }
 }
 
-/// Integration contract for reading recipes from `MOD-03`.
+/// Integration contract for reading recipes from MOD-03.
 abstract interface class RecipeCatalogReader {
   Future<RecipeSummary?> getRecipe(String recipeId);
   Future<List<RecipeSummary>> searchAccessibleRecipes(
@@ -103,7 +105,7 @@ abstract interface class RecipeCatalogReader {
   Future<List<RecipeIngredientDto>> getRecipeIngredients(String recipeId);
 }
 
-/// Integration contract for reading foods and units from `MOD-01`.
+/// Integration contract for reading foods and units from MOD-01.
 abstract interface class FoodCatalogReader {
   Future<FoodSummary?> getFood(String foodId);
   Future<List<FoodSummary>> searchFoods({String query = ''});
@@ -111,18 +113,44 @@ abstract interface class FoodCatalogReader {
   Future<List<UnitInfo>> getCompatibleUnits(String baseUnitId);
 }
 
-/// Default Firestore implementation of [RecipeCatalogReader] over `cong_thuc`.
-class FirestoreRecipeCatalogReader implements RecipeCatalogReader {
-  FirestoreRecipeCatalogReader({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+/// Supabase implementation of [RecipeCatalogReader] over `cong_thuc` table.
+class SupabaseRecipeCatalogReader implements RecipeCatalogReader {
+  SupabaseRecipeCatalogReader({SupabaseClient? supabase})
+      : _customSupabase = supabase;
 
-  final FirebaseFirestore _firestore;
+  final SupabaseClient? _customSupabase;
+  SupabaseClient get _db => _customSupabase ?? Supabase.instance.client;
 
   @override
   Future<RecipeSummary?> getRecipe(String recipeId) async {
-    final doc = await _firestore.collection('cong_thuc').doc(recipeId).get();
-    if (!doc.exists || doc.data() == null) return null;
-    return _mapRecipe(doc.id, doc.data()!);
+    try {
+      final rows = await _db
+          .from('cong_thuc')
+          .select()
+          .eq('id', recipeId)
+          .limit(1);
+      if (rows.isNotEmpty) {
+        return _mapRecipe(rows.first);
+      }
+    } catch (_) {}
+
+    // Fallback to mock data
+    final mock = RecipeMockData.initialRecipes.cast<dynamic>().firstWhere(
+          (r) => r.id == recipeId,
+          orElse: () => null,
+        );
+    if (mock != null) {
+      return RecipeSummary(
+        id: mock.id,
+        authorId: mock.authorId,
+        name: mock.name,
+        baseServings: (mock.baseServings as num).toDouble(),
+        visibility: mock.visibility.name.toUpperCase(),
+        cookingMinutes: mock.cookingMinutes,
+        imageUrl: mock.imageUrl,
+      );
+    }
+    return null;
   }
 
   @override
@@ -130,82 +158,173 @@ class FirestoreRecipeCatalogReader implements RecipeCatalogReader {
     String userId, {
     String query = '',
   }) async {
-    final snapshot = await _firestore.collection('cong_thuc').limit(100).get();
     final lowerQuery = query.trim().toLowerCase();
-    return snapshot.docs
-        .map((doc) => _mapRecipe(doc.id, doc.data()))
-        .where((recipe) => recipe.canUserAccess(userId))
-        .where(
-          (recipe) =>
-              lowerQuery.isEmpty ||
-              recipe.name.toLowerCase().contains(lowerQuery),
-        )
+    try {
+      final rows = await _db.from('cong_thuc').select().limit(100);
+      if (rows.isNotEmpty) {
+        return rows
+            .map<RecipeSummary>((r) => _mapRecipe(r))
+            .where((recipe) => recipe.canUserAccess(userId))
+            .where((recipe) =>
+                lowerQuery.isEmpty ||
+                recipe.name.toLowerCase().contains(lowerQuery))
+            .toList();
+      }
+    } catch (_) {}
+
+    return RecipeMockData.initialRecipes
+        .where((recipe) =>
+            lowerQuery.isEmpty ||
+            recipe.name.toLowerCase().contains(lowerQuery))
+        .map<RecipeSummary>((r) => RecipeSummary(
+              id: r.id,
+              authorId: r.authorId,
+              name: r.name,
+              baseServings: r.baseServings.toDouble(),
+              visibility: r.visibility.name.toUpperCase(),
+              cookingMinutes: r.cookingMinutes,
+              imageUrl: r.imageUrl,
+            ))
         .toList();
   }
 
   @override
-  Future<List<RecipeIngredientDto>> getRecipeIngredients(String recipeId) async {
-    final snapshot = await _firestore
-        .collection('cong_thuc')
-        .doc(recipeId)
-        .collection('nguyen_lieu')
-        .get();
-    return snapshot.docs.map((doc) {
-      final data = doc.data();
-      return RecipeIngredientDto(
-        foodId: data['ma_thuc_pham'] as String? ?? doc.id,
-        unitId: data['ma_don_vi'] as String? ?? '',
-        quantity: (data['so_luong'] as num?)?.toDouble() ?? 0,
-      );
-    }).toList();
+  Future<List<RecipeIngredientDto>> getRecipeIngredients(
+      String recipeId) async {
+    try {
+      final rows = await _db
+          .from('nguyen_lieu_cong_thuc')
+          .select()
+          .eq('cong_thuc_id', recipeId);
+      if (rows.isNotEmpty) {
+        return rows
+            .map<RecipeIngredientDto>((r) => RecipeIngredientDto(
+                  foodId: r['thuc_pham_id'] as String? ?? '',
+                  unitId: r['don_vi_id'] as String? ?? '',
+                  quantity: (r['so_luong_co_so'] as num?)?.toDouble() ?? 0,
+                ))
+            .toList();
+      }
+    } catch (_) {}
+
+    final ingredients = RecipeMockData.initialIngredients[recipeId];
+    if (ingredients != null) {
+      return ingredients
+          .map<RecipeIngredientDto>((i) => RecipeIngredientDto(
+                foodId: i.foodId,
+                unitId: i.unitId,
+                quantity: i.baseQuantity,
+              ))
+          .toList();
+    }
+    return const [];
   }
 
-  static RecipeSummary _mapRecipe(String id, Map<String, dynamic> data) {
+  static RecipeSummary _mapRecipe(Map<String, dynamic> data) {
     return RecipeSummary(
-      id: id,
+      id: data['id']?.toString() ?? '',
       authorId: data['ma_tac_gia'] as String? ?? '',
-      name: data['ten_mon'] as String? ?? 'Công thức',
+      name: data['ten'] as String? ?? 'CÃ´ng thá»©c',
       baseServings: (data['khau_phan'] as num?)?.toDouble() ?? 1,
-      visibility: data['pham_vi_hien_thi'] as String? ?? 'PRIVATE',
+      // Shared schema: loai = 'SYSTEM' | 'USER'. USER recipes are private to author.
+      visibility: (data['loai'] as String?)?.toUpperCase() == 'SYSTEM'
+          ? 'SYSTEM'
+          : 'PRIVATE',
       cookingMinutes: (data['thoi_gian_nau'] as num?)?.toInt() ?? 0,
       imageUrl: data['hinh_anh'] as String?,
     );
   }
 }
 
-/// Default Firestore implementation of [FoodCatalogReader] over `thuc_pham` & `don_vi`.
-class FirestoreFoodCatalogReader implements FoodCatalogReader {
-  FirestoreFoodCatalogReader({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+/// Supabase implementation of [FoodCatalogReader] over `thuc_pham` & `don_vi` tables.
+class SupabaseFoodCatalogReader implements FoodCatalogReader {
+  SupabaseFoodCatalogReader({SupabaseClient? supabase})
+      : _customSupabase = supabase;
 
-  final FirebaseFirestore _firestore;
+  final SupabaseClient? _customSupabase;
+  SupabaseClient get _db => _customSupabase ?? Supabase.instance.client;
 
   @override
   Future<FoodSummary?> getFood(String foodId) async {
-    final doc = await _firestore.collection('thuc_pham').doc(foodId).get();
-    if (!doc.exists || doc.data() == null) return null;
-    return _mapFood(doc.id, doc.data()!);
+    try {
+      final rows = await _db
+          .from('thuc_pham_global')
+          .select()
+          .eq('id', foodId)
+          .limit(1);
+      if (rows.isNotEmpty) {
+        return _mapFood(rows.first);
+      }
+    } catch (_) {}
+
+    // Fallback to mock data
+    FoodItem? mock;
+    for (final f in PantryMockData.initialFoods) {
+      if (f.id == foodId) {
+        mock = f;
+        break;
+      }
+    }
+    if (mock != null) {
+      return FoodSummary(
+        id: mock.id,
+        name: mock.name,
+        baseUnitId: mock.baseUnit,
+      );
+    }
+    return null;
   }
 
   @override
   Future<List<FoodSummary>> searchFoods({String query = ''}) async {
-    final snapshot = await _firestore.collection('thuc_pham').limit(100).get();
     final lowerQuery = query.trim().toLowerCase();
-    return snapshot.docs
-        .map((doc) => _mapFood(doc.id, doc.data()))
-        .where(
-          (food) =>
-              lowerQuery.isEmpty ||
-              food.name.toLowerCase().contains(lowerQuery),
-        )
+    try {
+      final rows = await _db.from('thuc_pham_global').select().limit(100);
+      if (rows.isNotEmpty) {
+        return rows
+            .map<FoodSummary>((r) => _mapFood(r))
+            .where((food) =>
+                lowerQuery.isEmpty ||
+                food.name.toLowerCase().contains(lowerQuery))
+            .toList();
+      }
+    } catch (_) {}
+
+    return PantryMockData.initialFoods
+        .where((food) =>
+            lowerQuery.isEmpty ||
+            food.name.toLowerCase().contains(lowerQuery))
+        .map<FoodSummary>((f) => FoodSummary(
+              id: f.id,
+              name: f.name,
+              baseUnitId: f.baseUnit,
+            ))
         .toList();
   }
 
   @override
   Future<UnitInfo?> getUnit(String unitId) async {
-    final doc = await _firestore.collection('don_vi').doc(unitId).get();
-    if (!doc.exists || doc.data() == null) return null;
-    return _mapUnit(doc.id, doc.data()!);
+    try {
+      final rows =
+          await _db.from('don_vi').select().eq('id', unitId).limit(1);
+      if (rows.isNotEmpty) return _mapUnit(rows.first);
+    } catch (_) {}
+    return _fallbackUnit(unitId);
+  }
+
+  /// Offline/demo fallback when `don_vi` has no row for [unitId].
+  static UnitInfo? _fallbackUnit(String unitId) {
+    final id = unitId.trim();
+    if (id.isEmpty) return null;
+    final lower = id.toLowerCase();
+    const mass = {'g', 'gram', 'kg', 'mg', 'unit_g', 'unit_kg'};
+    const volume = {'ml', 'l', 'lit', 'unit_ml', 'unit_l'};
+    final group = mass.contains(lower)
+        ? 'MASS'
+        : volume.contains(lower)
+            ? 'VOLUME'
+            : 'COUNT';
+    return UnitInfo(id: id, name: id, symbol: id, measurementGroup: group);
   }
 
   @override
@@ -213,34 +332,37 @@ class FirestoreFoodCatalogReader implements FoodCatalogReader {
     final baseUnit = await getUnit(baseUnitId);
     if (baseUnit == null) return const <UnitInfo>[];
 
-    final snapshot = await _firestore.collection('don_vi').get();
-    return snapshot.docs
-        .map((doc) => _mapUnit(doc.id, doc.data()))
-        .where((unit) => unit.isConvertibleTo(baseUnit))
-        .toList();
+    try {
+      final rows = await _db.from('don_vi').select();
+      return rows
+          .map<UnitInfo>((r) => _mapUnit(r))
+          .where((unit) => unit.isConvertibleTo(baseUnit))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
   }
 
-  static FoodSummary _mapFood(String id, Map<String, dynamic> data) {
+  static FoodSummary _mapFood(Map<String, dynamic> data) {
     return FoodSummary(
-      id: id,
-      name: data['ten_thuc_pham'] as String? ?? 'Thực phẩm',
-      baseUnitId: data['ma_don_vi_co_so'] as String? ?? '',
+      id: data['id'] as String? ?? '',
+      name: data['ten'] as String? ?? 'Thá»±c pháº©m',
+      baseUnitId: data['don_vi_co_so'] as String? ?? '',
       imageUrl: data['hinh_anh'] as String?,
     );
   }
 
-  static UnitInfo _mapUnit(String id, Map<String, dynamic> data) {
+  static UnitInfo _mapUnit(Map<String, dynamic> data) {
     return UnitInfo(
-      id: id,
-      name: data['ten_don_vi'] as String? ?? '',
-      symbol: data['ky_hieu'] as String? ?? id,
+      id: data['id'] as String? ?? '',
+      name: data['ten'] as String? ?? '',
+      symbol: data['ky_hieu'] as String? ?? (data['id'] as String? ?? ''),
       measurementGroup: data['nhom_do_luong'] as String? ?? 'COUNT',
-      toBaseFactor: (data['he_so_quy_doi'] as num?)?.toDouble() ?? 1.0,
     );
   }
 }
 
-/// Domain service for planning operations (`MOD-04-03`, `MOD-04-04`, and `MOD-04-05`).
+/// Domain service for planning operations (MOD-04-03, MOD-04-04, MOD-04-05).
 class MealService {
   MealService({
     required MealRepository mealRepository,
@@ -254,22 +376,22 @@ class MealService {
   final RecipeCatalogReader _recipeReader;
   final FoodCatalogReader _foodReader;
 
-  /// Adds a recipe dish to a `PLANNED` meal (`MOD-04-03`). Never deducts stock.
+  /// Adds a recipe dish to a PLANNED meal (MOD-04-03). Never deducts stock.
   Future<MealItem> addRecipeDish({
     required String userId,
     required String mealId,
     required String recipeId,
     required double servings,
   }) async {
-    _requirePositive(servings, 'Số khẩu phần phải lớn hơn 0.');
+    _requirePositive(servings, 'Sá»‘ kháº©u pháº§n pháº£i lá»›n hÆ¡n 0.');
     await _requirePlannedMeal(userId, mealId);
 
     final recipe = await _recipeReader.getRecipe(recipeId);
     if (recipe == null) {
-      throw const MealPlanException('Không tìm thấy công thức nấu ăn.');
+      throw const MealPlanException('KhÃ´ng tÃ¬m tháº¥y cÃ´ng thá»©c náº¥u Äƒn.');
     }
     if (!recipe.canUserAccess(userId)) {
-      throw const MealPlanException('Bạn không có quyền sử dụng công thức này.');
+      throw const MealPlanException('Báº¡n khÃ´ng cÃ³ quyá»n sá»­ dá»¥ng cÃ´ng thá»©c nÃ y.');
     }
 
     final item = MealItem.recipe(
@@ -281,7 +403,7 @@ class MealService {
     return _mealRepository.addMealItem(userId: userId, item: item);
   }
 
-  /// Adds a standalone ready-to-eat food to a `PLANNED` meal (`MOD-04-04`). Never deducts stock.
+  /// Adds a standalone ready-to-eat food to a PLANNED meal (MOD-04-04). Never deducts stock.
   Future<MealItem> addStandaloneFood({
     required String userId,
     required String mealId,
@@ -289,21 +411,21 @@ class MealService {
     required String unitId,
     required double quantity,
   }) async {
-    _requirePositive(quantity, 'Số lượng sử dụng phải lớn hơn 0.');
+    _requirePositive(quantity, 'Sá»‘ lÆ°á»£ng sá»­ dá»¥ng pháº£i lá»›n hÆ¡n 0.');
     await _requirePlannedMeal(userId, mealId);
 
     final food = await _foodReader.getFood(foodId);
     if (food == null) {
-      throw const MealPlanException('Không tìm thấy thực phẩm.');
+      throw const MealPlanException('KhÃ´ng tÃ¬m tháº¥y thá»±c pháº©m.');
     }
     final unit = await _foodReader.getUnit(unitId);
     final baseUnit = await _foodReader.getUnit(food.baseUnitId);
     if (unit == null || baseUnit == null) {
-      throw const MealPlanException('Đơn vị tính không hợp lệ.');
+      throw const MealPlanException('ÄÆ¡n vá»‹ tÃ­nh khÃ´ng há»£p lá»‡.');
     }
     if (!unit.isConvertibleTo(baseUnit)) {
       throw MealPlanException(
-        'Đơn vị "${unit.symbol}" không quy đổi được về đơn vị tồn kho "${baseUnit.symbol}".',
+        'ÄÆ¡n vá»‹ "${unit.symbol}" khÃ´ng quy Ä‘á»•i Ä‘Æ°á»£c vá» Ä‘Æ¡n vá»‹ tá»“n kho "${baseUnit.symbol}".',
       );
     }
 
@@ -317,14 +439,14 @@ class MealService {
     return _mealRepository.addMealItem(userId: userId, item: item);
   }
 
-  /// Updates quantity/servings of an item in a `PLANNED` meal (`MOD-04-05`).
+  /// Updates quantity/servings of an item in a PLANNED meal (MOD-04-05).
   Future<void> updateItemQuantity({
     required String userId,
     required String mealId,
     required String itemId,
     required double quantity,
   }) async {
-    _requirePositive(quantity, 'Số lượng hoặc khẩu phần phải lớn hơn 0.');
+    _requirePositive(quantity, 'Sá»‘ lÆ°á»£ng hoáº·c kháº©u pháº§n pháº£i lá»›n hÆ¡n 0.');
     await _mealRepository.updateMealItemQuantity(
       userId: userId,
       mealId: mealId,
@@ -333,7 +455,7 @@ class MealService {
     );
   }
 
-  /// Removes an item from a `PLANNED` meal (`MOD-04-05`). Does not affect stock.
+  /// Removes an item from a PLANNED meal (MOD-04-05). Does not affect stock.
   Future<void> removeItem({
     required String userId,
     required String mealId,
@@ -346,9 +468,7 @@ class MealService {
     );
   }
 
-  /// Moves a `PLANNED` meal to a new date and slot (`MOD-04-05`).
-  ///
-  /// Invokes [onReminderRescheduled] if the moved meal has an active reminder.
+  /// Moves a PLANNED meal to a new date and slot (MOD-04-05).
   Future<Meal> rescheduleMeal({
     required String userId,
     required String mealId,
@@ -368,7 +488,7 @@ class MealService {
     return movedMeal;
   }
 
-  /// Cancels a `PLANNED` meal (`MOD-04-05`). Never modifies `COMPLETED` meals or stock.
+  /// Cancels a PLANNED meal (MOD-04-05). Never modifies COMPLETED meals or stock.
   Future<void> cancelMeal({
     required String userId,
     required String mealId,
@@ -381,7 +501,8 @@ class MealService {
   }
 
   Future<Meal> _requirePlannedMeal(String userId, String mealId) async {
-    final meal = await _mealRepository.getMealById(userId: userId, mealId: mealId);
+    final meal =
+        await _mealRepository.getMealById(userId: userId, mealId: mealId);
     if (meal == null) {
       throw const MealNotFoundException();
     }
@@ -389,7 +510,7 @@ class MealService {
       throw const MealAlreadyCompletedException();
     }
     if (meal.isCancelled) {
-      throw const MealPlanException('Bữa ăn đã bị hủy.');
+      throw const MealPlanException('Bá»¯a Äƒn Ä‘Ã£ bá»‹ há»§y.');
     }
     return meal;
   }
@@ -400,4 +521,3 @@ class MealService {
     }
   }
 }
-

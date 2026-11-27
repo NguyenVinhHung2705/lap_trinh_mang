@@ -1,5 +1,6 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'meal_mock_data.dart';
 import 'models/meal.dart';
 import 'models/meal_item.dart';
 
@@ -20,7 +21,7 @@ class MealAlreadyCompletedException extends MealPlanException {
   ]);
 }
 
-/// Thrown when a requested meal or meal item document does not exist.
+/// Thrown when a requested meal or meal item does not exist.
 class MealNotFoundException extends MealPlanException {
   const MealNotFoundException([
     super.message = 'Không tìm thấy bữa ăn hoặc món ăn kế hoạch.',
@@ -34,72 +35,204 @@ class MealSlotConflictException extends MealPlanException {
   ]);
 }
 
-/// Firestore data access layer for `bua_an` and `mon_an_ke_hoach` (`MOD-04`).
+/// Supabase (PostgreSQL) data access layer for MOD-04.
 ///
-/// Maps to:
-/// - `/users/{uid}/meals/{mealId}`
-/// - `/users/{uid}/meals/{mealId}/items/{itemId}`
+/// Tables (see `SPRINT_FINAL.md` + `supabase/mod04_meal_plan.sql`):
+/// - `meals`      (id, user_id, ngay_an, buoi, trang_thai, gio_nhac, hoan_thanh_luc)
+/// - `meal_items` (id, meal_id, loai, tham_chieu_id, ten, so_luong, don_vi_id)
+///
+/// The app-level [Meal.id] stays `YYYY-MM-DD_SLOT`; the database row id is
+/// `{userId}_{Meal.id}` so that the primary key is unique across users.
 class MealRepository {
-  MealRepository({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+  MealRepository({SupabaseClient? supabase}) : _customSupabase = supabase;
 
-  final FirebaseFirestore _firestore;
+  final SupabaseClient? _customSupabase;
+  SupabaseClient get _db => _customSupabase ?? Supabase.instance.client;
 
-  CollectionReference<Map<String, dynamic>> _mealsRef(String userId) {
-    return _firestore.collection('users').doc(userId).collection('meals');
+  static const String mealsTable = 'meals';
+  static const String itemsTable = 'meal_items';
+
+  // In-memory fallback / mock store for offline & guest usage.
+  static final List<Meal> _memoryMeals =
+      List<Meal>.from(MealPlanMockData.initialMeals);
+  static final Map<String, List<MealItem>> _memoryMealItems =
+      MealPlanMockData.initialMealItems
+          .map((k, v) => MapEntry(k, List<MealItem>.from(v)));
+
+  bool _isMockUser(String userId) {
+    return userId.isEmpty ||
+        userId.startsWith('mock_') ||
+        userId.startsWith('guest_');
   }
 
-  DocumentReference<Map<String, dynamic>> _mealDoc(String userId, String mealId) {
-    return _mealsRef(userId).doc(mealId);
+  // ---------------------------------------------------------------------------
+  // Row <-> model mapping (public so other MOD-04 services reuse it)
+  // ---------------------------------------------------------------------------
+
+  /// Database primary key of a meal row.
+  static String rowMealId(String userId, String mealId) => '${userId}_$mealId';
+
+  /// Converts a database row id back to the app-level meal id.
+  static String appMealId(String userId, String rowId) {
+    final prefix = '${userId}_';
+    return rowId.startsWith(prefix) ? rowId.substring(prefix.length) : rowId;
   }
 
-  CollectionReference<Map<String, dynamic>> _itemsRef(
-    String userId,
-    String mealId,
-  ) {
-    return _mealDoc(userId, mealId).collection('items');
+  static Map<String, Object?> mealToRow(Meal meal) {
+    return {
+      'id': rowMealId(meal.userId, meal.id),
+      'user_id': meal.userId,
+      'ngay_an': Meal.formatLocalDate(meal.mealDate),
+      'buoi': meal.slot.value,
+      'trang_thai': meal.status.value,
+      'gio_nhac': meal.reminderAt?.toUtc().toIso8601String(),
+      'hoan_thanh_luc': meal.completedAt?.toUtc().toIso8601String(),
+    };
   }
 
-  /// Queries meals for [userId] within [startDate]..[endDate] (local calendar dates, inclusive).
-  ///
-  /// Read-only (`MOD-04-01`). Excludes cancelled meals by default.
+  static Meal mealFromRow(Map<String, dynamic> row) {
+    final userId = row['user_id'] as String;
+    return Meal.fromMap(
+      {
+        'ma_tai_khoan': userId,
+        'ngay_an': row['ngay_an'],
+        'khung_bua': row['buoi'],
+        'trang_thai': row['trang_thai'],
+        'gio_nhac': _toLocal(row['gio_nhac']),
+        'hoan_thanh_luc': _toLocal(row['hoan_thanh_luc']),
+      },
+      id: appMealId(userId, row['id'] as String),
+    );
+  }
+
+  static Map<String, Object?> itemToRow(String userId, MealItem item) {
+    return {
+      'id': item.id,
+      'meal_id': rowMealId(userId, item.mealId),
+      'loai': item.isRecipe ? 'RECIPE' : 'FOOD',
+      'tham_chieu_id': item.isRecipe ? item.recipeId : item.foodId,
+      // `ten` is NOT NULL in the shared schema; UI resolves display names itself.
+      'ten': (item.isRecipe ? item.recipeId : item.foodId) ?? 'Món ăn',
+      'so_luong': item.quantity,
+      'don_vi_id': item.unitId,
+    };
+  }
+
+  static MealItem itemFromRow(String userId, Map<String, dynamic> row) {
+    final isRecipe = (row['loai'] as String?)?.toUpperCase() == 'RECIPE';
+    final refId = row['tham_chieu_id'] as String?;
+    return MealItem.fromMap(
+      {
+        'ma_bua_an': appMealId(userId, row['meal_id'] as String),
+        'ma_cong_thuc': isRecipe ? refId : null,
+        'ma_thuc_pham': isRecipe ? null : refId,
+        'ma_don_vi': isRecipe ? null : row['don_vi_id'],
+        'so_luong': (row['so_luong'] as num?) ?? 1,
+      },
+      id: row['id'] as String,
+    );
+  }
+
+  static DateTime? _toLocal(Object? raw) {
+    if (raw == null) return null;
+    if (raw is DateTime) return raw.toLocal();
+    if (raw is String) return DateTime.parse(raw).toLocal();
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // READ
+  // ---------------------------------------------------------------------------
+
+  /// Queries meals for [userId] within [startDate]..[endDate] (inclusive).
   Future<List<Meal>> getMealsInRange({
     required String userId,
     required DateTime startDate,
     required DateTime endDate,
     bool includeCancelled = false,
   }) async {
-    final startKey = Meal.formatLocalDate(startDate);
-    final endKey = Meal.formatLocalDate(endDate);
+    if (_isMockUser(userId)) {
+      return _filterMemoryMeals(startDate, endDate, includeCancelled);
+    }
 
-    final snapshot = await _mealsRef(userId)
-        .where('ngay_an', isGreaterThanOrEqualTo: startKey)
-        .where('ngay_an', isLessThanOrEqualTo: endKey)
-        .orderBy('ngay_an')
-        .get();
+    try {
+      final rows = await _db
+          .from(mealsTable)
+          .select()
+          .eq('user_id', userId)
+          .gte('ngay_an', Meal.formatLocalDate(startDate))
+          .lte('ngay_an', Meal.formatLocalDate(endDate))
+          .order('ngay_an');
 
-    return _mapMealSnapshot(snapshot, includeCancelled: includeCancelled);
+      final meals = rows.map<Meal>(mealFromRow).toList();
+      return includeCancelled
+          ? meals
+          : meals.where((m) => !m.isCancelled).toList();
+    } catch (_) {
+      return _filterMemoryMeals(startDate, endDate, includeCancelled);
+    }
   }
 
-  /// Streams meals for [userId] within [startDate]..[endDate] for reactive calendar updates.
+  /// Streams meals for [userId] within [startDate]..[endDate] (Supabase Realtime).
   Stream<List<Meal>> watchMealsInRange({
     required String userId,
     required DateTime startDate,
     required DateTime endDate,
     bool includeCancelled = false,
   }) {
+    if (_isMockUser(userId)) {
+      return Stream.value(
+          _filterMemoryMeals(startDate, endDate, includeCancelled));
+    }
+
     final startKey = Meal.formatLocalDate(startDate);
     final endKey = Meal.formatLocalDate(endDate);
 
-    return _mealsRef(userId)
-        .where('ngay_an', isGreaterThanOrEqualTo: startKey)
-        .where('ngay_an', isLessThanOrEqualTo: endKey)
-        .orderBy('ngay_an')
-        .snapshots()
-        .map(
-          (snapshot) =>
-              _mapMealSnapshot(snapshot, includeCancelled: includeCancelled),
-        );
+    return _db
+        .from(mealsTable)
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .map((rows) {
+          final meals = rows
+              .where((r) {
+                final key = (r['ngay_an'] as String? ?? '');
+                return key.compareTo(startKey) >= 0 &&
+                    key.compareTo(endKey) <= 0;
+              })
+              .map<Meal>(mealFromRow)
+              .toList()
+            ..sort((a, b) => a.mealDate.compareTo(b.mealDate));
+          return includeCancelled
+              ? meals
+              : meals.where((m) => !m.isCancelled).toList();
+        })
+        .handleError((_) => <Meal>[]);
+  }
+
+  List<Meal> _filterMemoryMeals(
+      DateTime startDate, DateTime endDate, bool includeCancelled) {
+    final startKey = Meal.formatLocalDate(startDate);
+    final endKey = Meal.formatLocalDate(endDate);
+
+    return _memoryMeals.where((m) {
+      if (!includeCancelled && m.isCancelled) return false;
+      final mealKey = Meal.formatLocalDate(m.mealDate);
+      return mealKey.compareTo(startKey) >= 0 &&
+          mealKey.compareTo(endKey) <= 0;
+    }).toList();
+  }
+
+  Meal? _memoryMeal(String mealId) => _memoryMeals
+      .cast<Meal?>()
+      .firstWhere((m) => m?.id == mealId, orElse: () => null);
+
+  Future<Meal?> _fetchMeal(String userId, String mealId) async {
+    final row = await _db
+        .from(mealsTable)
+        .select()
+        .eq('id', rowMealId(userId, mealId))
+        .maybeSingle();
+    return row == null ? null : mealFromRow(row);
   }
 
   /// Fetches a single meal by [mealId], or returns `null` if not found.
@@ -107,92 +240,158 @@ class MealRepository {
     required String userId,
     required String mealId,
   }) async {
-    final doc = await _mealDoc(userId, mealId).get();
-    if (!doc.exists || doc.data() == null) return null;
-    return _mealFromDoc(doc);
+    if (_isMockUser(userId)) return _memoryMeal(mealId);
+
+    try {
+      return await _fetchMeal(userId, mealId) ?? _memoryMeal(mealId);
+    } catch (_) {
+      return _memoryMeal(mealId);
+    }
   }
 
-  /// Finds the meal for `(userId, date, slot)` or creates a new `PLANNED` one (`MOD-04-02`).
-  ///
-  /// Uses a deterministic document ID inside a transaction to prevent duplicate slots.
-  /// If a previous plan for that slot was `CANCELLED`, it is reactivated as `PLANNED`.
+  /// Finds the meal for `(userId, date, slot)` or creates a new PLANNED one (MOD-04-02).
   Future<Meal> getOrCreateMeal({
     required String userId,
     required DateTime date,
     required MealSlot slot,
   }) async {
     final normalizedDate = Meal.normalizeLocalDate(date);
-    final docId = Meal.buildDeterministicId(normalizedDate, slot);
-    final docRef = _mealDoc(userId, docId);
+    final mealId = Meal.buildDeterministicId(normalizedDate, slot);
 
-    return _firestore.runTransaction((txn) async {
-      final snap = await txn.get(docRef);
-      if (snap.exists && snap.data() != null) {
-        final existing = _mealFromDoc(snap);
-        if (!existing.isCancelled) {
-          return existing;
-        }
-      }
+    if (_isMockUser(userId)) {
+      return _memoryGetOrCreate(userId, mealId, normalizedDate, slot);
+    }
+
+    try {
+      final existing = await _fetchMeal(userId, mealId);
+      if (existing != null && !existing.isCancelled) return existing;
 
       final newMeal = Meal(
-        id: docId,
+        id: mealId,
         userId: userId,
         mealDate: normalizedDate,
         slot: slot,
         status: MealStatus.planned,
       );
-      txn.set(docRef, newMeal.toMap());
+      await _db.from(mealsTable).upsert(mealToRow(newMeal));
       return newMeal;
-    });
+    } catch (_) {
+      return _memoryGetOrCreate(userId, mealId, normalizedDate, slot);
+    }
   }
 
-  /// Reads all items in a meal (`mon_an_ke_hoach`).
+  Meal _memoryGetOrCreate(
+      String userId, String mealId, DateTime normalizedDate, MealSlot slot) {
+    final existingIdx = _memoryMeals.indexWhere((m) => m.id == mealId);
+    if (existingIdx != -1 && !_memoryMeals[existingIdx].isCancelled) {
+      return _memoryMeals[existingIdx];
+    }
+    final newMeal = Meal(
+      id: mealId,
+      userId: userId,
+      mealDate: normalizedDate,
+      slot: slot,
+      status: MealStatus.planned,
+    );
+    if (existingIdx != -1) {
+      _memoryMeals[existingIdx] = newMeal;
+    } else {
+      _memoryMeals.add(newMeal);
+    }
+    return newMeal;
+  }
+
+  /// Reads all items in a meal (`meal_items`).
   Future<List<MealItem>> getMealItems({
     required String userId,
     required String mealId,
   }) async {
-    final snapshot = await _itemsRef(userId, mealId).get();
-    return snapshot.docs
-        .map((doc) => MealItem.fromMap(_normalizeMap(doc.data()), id: doc.id))
-        .toList();
+    final memoryItems = _memoryMealItems[mealId] ?? const <MealItem>[];
+    if (_isMockUser(userId)) return memoryItems;
+
+    try {
+      final rows = await _db
+          .from(itemsTable)
+          .select()
+          .eq('meal_id', rowMealId(userId, mealId))
+          .order('created_at');
+      return rows.map<MealItem>((r) => itemFromRow(userId, r)).toList();
+    } catch (_) {
+      return memoryItems;
+    }
   }
 
-  /// Streams items belonging to [mealId] in real time.
+  /// Streams items belonging to [mealId] (Supabase Realtime).
   Stream<List<MealItem>> watchMealItems({
     required String userId,
     required String mealId,
   }) {
-    return _itemsRef(userId, mealId).snapshots().map(
-          (snapshot) => snapshot.docs
-              .map(
-                (doc) => MealItem.fromMap(_normalizeMap(doc.data()), id: doc.id),
-              )
-              .toList(),
-        );
+    final memoryItems = _memoryMealItems[mealId] ?? const <MealItem>[];
+    if (_isMockUser(userId)) return Stream.value(memoryItems);
+
+    return _db
+        .from(itemsTable)
+        .stream(primaryKey: ['id'])
+        .eq('meal_id', rowMealId(userId, mealId))
+        .map((rows) =>
+            rows.map<MealItem>((r) => itemFromRow(userId, r)).toList())
+        .handleError((_) => memoryItems);
   }
 
-  /// Adds a recipe or standalone food item to a `PLANNED` meal (`MOD-04-03`, `MOD-04-04`).
-  ///
-  /// Never modifies pantry stock. Generates a new document ID if [item.id] is `'new'`.
+  // ---------------------------------------------------------------------------
+  // WRITE — none of these touch pantry stock (business invariant).
+  // ---------------------------------------------------------------------------
+
+  /// Ensures [mealId] exists and is PLANNED; throws domain exceptions otherwise.
+  Future<Meal> _requirePlannedMeal(String userId, String mealId) async {
+    final meal = await _fetchMeal(userId, mealId);
+    if (meal == null) throw const MealNotFoundException();
+    if (meal.isCompleted) throw const MealAlreadyCompletedException();
+    if (meal.isCancelled) {
+      throw const MealPlanException('Bữa ăn đã bị hủy, không thể thao tác.');
+    }
+    return meal;
+  }
+
+  /// Adds a recipe or standalone food item to a PLANNED meal (MOD-04-03, MOD-04-04).
   Future<MealItem> addMealItem({
     required String userId,
     required MealItem item,
   }) async {
-    final mealRef = _mealDoc(userId, item.mealId);
-    final itemRef = item.id == 'new'
-        ? _itemsRef(userId, item.mealId).doc()
-        : _itemsRef(userId, item.mealId).doc(item.id);
-    final persistedItem = item.id == itemRef.id ? item : item.copyWith(id: itemRef.id);
+    final itemId = item.id == 'new' || item.id.isEmpty
+        ? 'item_${DateTime.now().microsecondsSinceEpoch}'
+        : item.id;
+    final persistedItem = item.copyWith(id: itemId);
 
-    await _firestore.runTransaction((txn) async {
-      await _requirePlannedMealInTxn(txn, mealRef);
-      txn.set(itemRef, persistedItem.toMap());
-    });
+    if (_isMockUser(userId)) {
+      _memoryMealItems.putIfAbsent(item.mealId, () => []).add(persistedItem);
+      return persistedItem;
+    }
 
+    try {
+      final existing = await _fetchMeal(userId, item.mealId);
+      if (existing == null) {
+        // Meal was created in memory earlier (offline) → persist it first.
+        final memMeal = _memoryMeal(item.mealId);
+        if (memMeal == null) throw const MealNotFoundException();
+        await _db.from(mealsTable).upsert(mealToRow(memMeal));
+      } else if (existing.isCompleted) {
+        throw const MealAlreadyCompletedException();
+      } else if (existing.isCancelled) {
+        throw const MealPlanException('Bữa ăn đã bị hủy, không thể thêm món.');
+      }
+
+      await _db.from(itemsTable).insert(itemToRow(userId, persistedItem));
+    } on MealPlanException {
+      rethrow;
+    } catch (_) {
+      // Network/DB error → keep the item locally so the demo keeps working.
+      _memoryMealItems.putIfAbsent(item.mealId, () => []).add(persistedItem);
+    }
     return persistedItem;
   }
 
-  /// Updates quantity/servings of an item in a `PLANNED` meal (`MOD-04-05`).
+  /// Updates quantity/servings of an item in a PLANNED meal (MOD-04-05).
   Future<void> updateMealItemQuantity({
     required String userId,
     required String mealId,
@@ -203,41 +402,45 @@ class MealRepository {
       throw ArgumentError.value(quantity, 'quantity', 'Quantity must be > 0');
     }
 
-    final mealRef = _mealDoc(userId, mealId);
-    final itemRef = _itemsRef(userId, mealId).doc(itemId);
+    final items = _memoryMealItems[mealId];
+    final idx = items?.indexWhere((i) => i.id == itemId) ?? -1;
+    if (idx != -1) items![idx] = items[idx].copyWith(quantity: quantity);
 
-    await _firestore.runTransaction((txn) async {
-      await _requirePlannedMealInTxn(txn, mealRef);
-      final itemSnap = await txn.get(itemRef);
-      if (!itemSnap.exists) {
-        throw const MealNotFoundException();
-      }
-      txn.update(itemRef, {'so_luong': quantity});
-    });
+    if (_isMockUser(userId)) return;
+
+    try {
+      await _requirePlannedMeal(userId, mealId);
+      await _db
+          .from(itemsTable)
+          .update({'so_luong': quantity}).eq('id', itemId);
+    } on MealPlanException {
+      rethrow;
+    } catch (_) {
+      return;
+    }
   }
 
-  /// Removes a single item from a `PLANNED` meal (`MOD-04-05`).
+  /// Removes a single item from a PLANNED meal (MOD-04-05).
   Future<void> removeMealItem({
     required String userId,
     required String mealId,
     required String itemId,
   }) async {
-    final mealRef = _mealDoc(userId, mealId);
-    final itemRef = _itemsRef(userId, mealId).doc(itemId);
+    _memoryMealItems[mealId]?.removeWhere((i) => i.id == itemId);
 
-    await _firestore.runTransaction((txn) async {
-      await _requirePlannedMealInTxn(txn, mealRef);
-      final itemSnap = await txn.get(itemRef);
-      if (!itemSnap.exists) {
-        throw const MealNotFoundException();
-      }
-      txn.delete(itemRef);
-    });
+    if (_isMockUser(userId)) return;
+
+    try {
+      await _requirePlannedMeal(userId, mealId);
+      await _db.from(itemsTable).delete().eq('id', itemId);
+    } on MealPlanException {
+      rethrow;
+    } catch (_) {
+      return;
+    }
   }
 
-  /// Moves a `PLANNED` meal and its items to a new `(newDate, newSlot)` (`MOD-04-05`).
-  ///
-  /// Throws [MealSlotConflictException] if the target slot already has a non-cancelled meal.
+  /// Moves a PLANNED meal and its items to a new `(newDate, newSlot)` (MOD-04-05).
   Future<Meal> rescheduleMeal({
     required String userId,
     required String mealId,
@@ -252,114 +455,112 @@ class MealRepository {
       return current;
     }
 
-    final sourceRef = _mealDoc(userId, mealId);
-    final targetRef = _mealDoc(userId, targetId);
-    final existingItems = await getMealItems(userId: userId, mealId: mealId);
-
-    return _firestore.runTransaction((txn) async {
-      final sourceMeal = await _requirePlannedMealInTxn(txn, sourceRef);
-      final targetSnap = await txn.get(targetRef);
-      if (targetSnap.exists && targetSnap.data() != null) {
-        final targetMeal = _mealFromDoc(targetSnap);
-        if (!targetMeal.isCancelled) {
-          throw const MealSlotConflictException();
-        }
-      }
-
-      final movedMeal = sourceMeal.copyWith(
-        id: targetId,
-        mealDate: normalizedDate,
-        slot: newSlot,
-      );
-
-      txn.set(targetRef, movedMeal.toMap());
-      for (final item in existingItems) {
-        final movedItem = item.copyWith(mealId: targetId);
-        txn.set(_itemsRef(userId, targetId).doc(movedItem.id), movedItem.toMap());
-        txn.delete(_itemsRef(userId, mealId).doc(item.id));
-      }
-      txn.delete(sourceRef);
-
+    if (_isMockUser(userId)) {
+      final sIdx = _memoryMeals.indexWhere((m) => m.id == mealId);
+      if (sIdx == -1) throw const MealNotFoundException();
+      final movedMeal = _memoryMeals[sIdx]
+          .copyWith(id: targetId, mealDate: normalizedDate, slot: newSlot);
+      _memoryMeals[sIdx] = movedMeal;
+      final items = _memoryMealItems.remove(mealId) ?? [];
+      _memoryMealItems[targetId] =
+          items.map((i) => i.copyWith(mealId: targetId)).toList();
       return movedMeal;
-    });
+    }
+
+    final sourceMeal = await _requirePlannedMeal(userId, mealId);
+    final targetMeal = await _fetchMeal(userId, targetId);
+    if (targetMeal != null && !targetMeal.isCancelled) {
+      throw const MealSlotConflictException();
+    }
+
+    final movedMeal = sourceMeal.copyWith(
+        id: targetId, mealDate: normalizedDate, slot: newSlot);
+
+    // 1. Create/overwrite target meal row.
+    await _db.from(mealsTable).upsert(mealToRow(movedMeal));
+    // 2. Remove old items of a cancelled target (if any), then re-point items.
+    await _db
+        .from(itemsTable)
+        .delete()
+        .eq('meal_id', rowMealId(userId, targetId));
+    await _db
+        .from(itemsTable)
+        .update({'meal_id': rowMealId(userId, targetId)}).eq(
+            'meal_id', rowMealId(userId, mealId));
+    // 3. Delete source meal row.
+    await _db.from(mealsTable).delete().eq('id', rowMealId(userId, mealId));
+
+    return movedMeal;
   }
 
-  /// Marks a `PLANNED` meal as `CANCELLED` (`MOD-04-05`). Does not affect stock.
+  /// Marks a PLANNED meal as CANCELLED (MOD-04-05). Does not affect stock.
   Future<void> cancelMeal({
     required String userId,
     required String mealId,
   }) async {
-    final mealRef = _mealDoc(userId, mealId);
+    final idx = _memoryMeals.indexWhere((m) => m.id == mealId);
+    if (idx != -1 && _memoryMeals[idx].isPlanned) {
+      _memoryMeals[idx] =
+          _memoryMeals[idx].copyWith(status: MealStatus.cancelled);
+    }
 
-    await _firestore.runTransaction((txn) async {
-      await _requirePlannedMealInTxn(txn, mealRef);
-      txn.update(mealRef, {
-        'trang_thai': MealStatus.cancelled.value,
-        'gio_nhac': null,
-      });
-    });
+    if (_isMockUser(userId)) return;
+
+    await _requirePlannedMeal(userId, mealId);
+    await _db.from(mealsTable).update({
+      'trang_thai': MealStatus.cancelled.value,
+      'gio_nhac': null,
+    }).eq('id', rowMealId(userId, mealId));
   }
 
-  /// Sets or clears `gio_nhac` on a `PLANNED` meal (`MOD-04-06`).
+  /// Marks a meal as completed (used for guest/offline mode).
+  ///
+  /// For real users, completion + FEFO deduction happens atomically inside the
+  /// PostgreSQL function `complete_meal_fefo` (see [StockDeductionService]).
+  Future<Meal> markMealCompleted({
+    required String userId,
+    required String mealId,
+    required DateTime completedAt,
+  }) async {
+    final idx = _memoryMeals.indexWhere((m) => m.id == mealId);
+    if (idx != -1) {
+      _memoryMeals[idx] = _memoryMeals[idx].copyWith(
+        status: MealStatus.completed,
+        completedAt: completedAt,
+      );
+      if (_isMockUser(userId)) return _memoryMeals[idx];
+    }
+
+    await _db.from(mealsTable).update({
+      'trang_thai': MealStatus.completed.value,
+      'hoan_thanh_luc': completedAt.toUtc().toIso8601String(),
+    }).eq('id', rowMealId(userId, mealId));
+    final updated = await _fetchMeal(userId, mealId);
+    if (updated == null) throw const MealNotFoundException();
+    return updated;
+  }
+
+  /// Sets or clears `gio_nhac` on a PLANNED meal (MOD-04-06).
   Future<void> updateMealReminder({
     required String userId,
     required String mealId,
     DateTime? reminderAt,
   }) async {
-    final mealRef = _mealDoc(userId, mealId);
-
-    await _firestore.runTransaction((txn) async {
-      await _requirePlannedMealInTxn(txn, mealRef);
-      txn.update(mealRef, {
-        'gio_nhac': reminderAt?.toIso8601String(),
-      });
-    });
-  }
-
-  /// Ensures the target meal exists and is still `PLANNED` before any mutation.
-  Future<Meal> _requirePlannedMealInTxn(
-    Transaction txn,
-    DocumentReference<Map<String, dynamic>> mealRef,
-  ) async {
-    final snap = await txn.get(mealRef);
-    if (!snap.exists || snap.data() == null) {
-      throw const MealNotFoundException();
+    final idx = _memoryMeals.indexWhere((m) => m.id == mealId);
+    if (idx != -1) {
+      _memoryMeals[idx] = reminderAt == null
+          ? _memoryMeals[idx].copyWith(clearReminderAt: true)
+          : _memoryMeals[idx].copyWith(reminderAt: reminderAt);
     }
-    final meal = _mealFromDoc(snap);
-    if (meal.isCompleted) {
-      throw const MealAlreadyCompletedException();
-    }
-    if (meal.isCancelled) {
-      throw const MealPlanException('Bữa ăn đã bị hủy, không thể thao tác.');
-    }
-    return meal;
-  }
 
-  List<Meal> _mapMealSnapshot(
-    QuerySnapshot<Map<String, dynamic>> snapshot, {
-    required bool includeCancelled,
-  }) {
-    final meals = snapshot.docs.map(_mealFromDoc);
-    if (includeCancelled) return meals.toList();
-    return meals.where((meal) => !meal.isCancelled).toList();
-  }
+    if (_isMockUser(userId)) return;
 
-  Meal _mealFromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data();
-    if (data == null) {
-      throw const MealNotFoundException();
+    try {
+      await _db.from(mealsTable).update({
+        'gio_nhac': reminderAt?.toUtc().toIso8601String(),
+      }).eq('id', rowMealId(userId, mealId));
+    } catch (_) {
+      return;
     }
-    return Meal.fromMap(_normalizeMap(data), id: doc.id);
-  }
-
-  /// Converts Firestore [Timestamp] instances into Dart [DateTime] for pure-Dart models.
-  Map<String, Object?> _normalizeMap(Map<String, dynamic> raw) {
-    return raw.map((key, value) {
-      if (value is Timestamp) {
-        return MapEntry(key, value.toDate());
-      }
-      return MapEntry(key, value);
-    });
   }
 }
-

@@ -13,9 +13,9 @@ class ShoppingService {
     PantryReader? pantryReader,
     RecipeShortageReader? recipeShortageReader,
   })  : _repository = shoppingRepository,
-        _pantryReader = pantryReader ?? FirestorePantryAdapter(),
+        _pantryReader = pantryReader ?? SupabasePantryAdapter(),
         _recipeShortageReader =
-            recipeShortageReader ?? FirestoreRecipeShortageAdapter();
+            recipeShortageReader ?? SupabaseRecipeShortageAdapter();
 
   final ShoppingRepository _repository;
   final PantryReader _pantryReader;
@@ -246,7 +246,7 @@ class ShoppingService {
   // ---------------------------------------------------------------------------
 
   /// Calculates low-stock suggestions:
-  /// - Reads configs from `cau_hinh_thuc_pham`
+  /// - Reads configs from `food_minimum_stock`
   /// - Usable stock = SUM(nhap) - SUM(xuat) from `bien_dong_kho` (excluding expired lots)
   /// - Low stock: usable stock <= threshold
   /// - Checks existing items in [listId] to avoid duplicate warnings
@@ -416,4 +416,3 @@ class ShoppingService {
     );
   }
 }
-

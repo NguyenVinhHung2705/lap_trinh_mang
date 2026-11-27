@@ -1,0 +1,39 @@
+appId: com.example.smart_food_life
+---
+# TC-E2E-01: Lên lịch → Thêm món → Hoàn thành
+- launchApp:
+    clearState: true
+- tapOn: "Dùng tài khoản Local (Dùng thử)"
+- assertVisible: "Tổng quan hôm nay"
+
+# Vào lịch
+- tapOn: "Lên lịch"
+- assertVisible: "Kế hoạch bữa ăn"
+
+# Mở bữa Trưa
+- tapOn: "Bữa Trưa"
+- assertVisible: "Chi tiết bữa ăn"
+
+# Thêm món từ công thức
+- tapOn: "Thêm món"
+- tapOn: "Công thức"
+- tapOn:
+    index: 0
+- tapOn: "Thêm vào bữa"
+
+# Thêm thực phẩm đơn lẻ
+- tapOn: "Thêm món"
+- tapOn: "Thực phẩm"
+- tapOn:
+    index: 0
+- tapOn: "Thêm vào bữa"
+
+# Hoàn thành bữa ăn → trừ kho
+- scrollUntilVisible:
+    element:
+      text: "Hoàn thành bữa ăn"
+    direction: DOWN
+- tapOn: "Hoàn thành bữa ăn"
+- assertVisible: "Xác nhận tiêu thụ"
+- tapOn: "Xác nhận"
+- assertVisible: "Đã hoàn thành"

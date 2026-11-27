@@ -18,8 +18,12 @@ final recipeServiceProvider = Provider<RecipeService>((ref) {
 
 /// Current active user UID from Firebase Auth.
 final currentUserIdProvider = Provider<String>((ref) {
-  final authUser = FirebaseAuth.instance.currentUser;
-  return authUser?.uid ?? 'guest_user';
+  try {
+    final authUser = FirebaseAuth.instance.currentUser;
+    return authUser?.uid ?? 'guest_user';
+  } catch (_) {
+    return 'guest_user';
+  }
 });
 
 /// State provider for search query text filter.
