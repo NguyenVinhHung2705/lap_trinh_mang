@@ -28,7 +28,7 @@ class FoodItem {
   final String id;
   final String name;
   final String categoryName; // Rau củ, Thịt cá, Gia vị, Đồ uống,...
-  final String baseUnit;     // kg, g, quả, hộp, ml, lít,...
+  final String baseUnit; // kg, g, quả, hộp, ml, lít,...
   final String? barcode;
   final String? imageUrl;
   final double minimumStock;
@@ -40,7 +40,11 @@ class FoodItem {
     if (closestExpiryDate == null) return ExpiryStatus.good;
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final expiry = DateTime(closestExpiryDate!.year, closestExpiryDate!.month, closestExpiryDate!.day);
+    final expiry = DateTime(
+      closestExpiryDate!.year,
+      closestExpiryDate!.month,
+      closestExpiryDate!.day,
+    );
     final difference = expiry.difference(today).inDays;
 
     if (difference < 0) return ExpiryStatus.expired;
@@ -92,8 +96,12 @@ class FoodItem {
     return FoodItem(
       id: id,
       name: map['ten_thuc_pham'] as String? ?? 'Chưa đặt tên',
-      categoryName: map['ten_danh_muc'] as String? ?? map['loai_thuc_pham'] as String? ?? 'Khác',
-      baseUnit: map['don_vi_co_so'] as String? ?? map['don_vi_chuan'] as String? ?? 'phần',
+      categoryName: map['ten_danh_muc'] as String? ??
+          map['loai_thuc_pham'] as String? ??
+          'Khác',
+      baseUnit: map['don_vi_co_so'] as String? ??
+          map['don_vi_chuan'] as String? ??
+          'phần',
       barcode: map['ma_vach'] as String?,
       imageUrl: map['hinh_anh'] as String?,
       minimumStock: (map['nguong_sap_het'] as num?)?.toDouble() ??
