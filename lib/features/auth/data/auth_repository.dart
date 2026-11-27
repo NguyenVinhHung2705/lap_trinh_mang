@@ -80,18 +80,16 @@ class AuthRepository {
         await user.updateDisplayName(displayName.trim());
       } catch (_) {}
 
-      try {
-        final now = DateTime.now().toUtc().toIso8601String();
-        await _db.from('user_profiles').upsert({
-          'id': user.uid,
-          'email': user.email,
-          'display_name': displayName.trim(),
-          'avatar_url': null,
-          'email_verified': false,
-          'created_at': now,
-          'updated_at': now,
-        });
-      } catch (_) {}
+      final now = DateTime.now().toUtc().toIso8601String();
+      await _db.from('user_profiles').upsert({
+        'id': user.uid,
+        'email': user.email,
+        'display_name': displayName.trim(),
+        'avatar_url': null,
+        'email_verified': false,
+        'created_at': now,
+        'updated_at': now,
+      });
 
       try {
         await user.sendEmailVerification();
