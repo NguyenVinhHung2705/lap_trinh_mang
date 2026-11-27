@@ -80,18 +80,16 @@ class AuthRepository {
         await user.updateDisplayName(displayName.trim());
       } catch (_) {}
 
-      try {
-        final now = DateTime.now().toUtc().toIso8601String();
-        await _db.from('user_profiles').upsert({
-          'id': user.uid,
-          'email': user.email,
-          'display_name': displayName.trim(),
-          'avatar_url': null,
-          'email_verified': false,
-          'created_at': now,
-          'updated_at': now,
-        });
-      } catch (_) {}
+      final now = DateTime.now().toUtc().toIso8601String();
+      await _db.from('user_profiles').upsert({
+        'id': user.uid,
+        'email': user.email,
+        'display_name': displayName.trim(),
+        'avatar_url': null,
+        'email_verified': false,
+        'created_at': now,
+        'updated_at': now,
+      });
 
       try {
         await user.sendEmailVerification();
@@ -112,10 +110,37 @@ class AuthRepository {
   Future<UserCredential> signIn(
       {required String email, required String password}) async {
     try {
-      return await _auth.signInWithEmailAndPassword(
+      final credential = await _auth.signInWithEmailAndPassword(
         email: email.trim(),
         password: password,
       );
+      final user = credential.user;
+      if (user != null) {
+        // Tự động kiểm tra và khởi tạo user_profiles nếu chưa có
+        try {
+          final existing = await _db
+              .from('user_profiles')
+              .select('id')
+              .eq('id', user.uid)
+              .maybeSingle();
+          if (existing == null) {
+            final now = DateTime.now().toUtc().toIso8601String();
+            await _db.from('user_profiles').upsert({
+              'id': user.uid,
+              'email': user.email,
+              'display_name': user.displayName ?? (user.email?.split('@').first ?? 'Người dùng'),
+              'avatar_url': user.photoURL,
+              'phone_number': user.phoneNumber,
+              'email_verified': user.emailVerified,
+              'created_at': now,
+              'updated_at': now,
+            });
+          }
+        } catch (_) {
+          // Tránh chặn đăng nhập nếu bảng chưa sẵn sàng
+        }
+      }
+      return credential;
     } on FirebaseAuthException catch (error) {
       throw AuthModuleException(_authMessage(error.code, error.message));
     } catch (error) {
