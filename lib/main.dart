@@ -1,4 +1,5 @@
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -40,6 +41,36 @@ class SmartFoodLifeApp extends ConsumerWidget {
     return MaterialApp(
       title: 'Smart Food Life',
       debugShowCheckedModeBanner: false,
+      builder: (context, child) {
+        if (!kIsWeb || child == null) return child ?? const SizedBox.shrink();
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            // Trên màn hình điện thoại thật thì hiển thị tràn màn hình tự nhiên.
+            if (constraints.maxWidth <= 500) return child;
+            return ColoredBox(
+              color: const Color(0xFFEAEFEA),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 430),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.10),
+                          blurRadius: 24,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: child,
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: AppColors.primary,
