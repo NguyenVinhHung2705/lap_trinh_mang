@@ -1,6 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
-/// Private profile data stored at `/users/{uid}` (`MOD-05`).
+/// Private profile data stored in `user_profiles` table (`MOD-05`).
 class UserProfile {
   const UserProfile({
     required this.uid,
@@ -22,14 +20,21 @@ class UserProfile {
 
   factory UserProfile.fromMap(String uid, Map<String, dynamic> data) {
     final createdAtValue = data['created_at'];
+    DateTime? parsedCreatedAt;
+    if (createdAtValue is String) {
+      parsedCreatedAt = DateTime.tryParse(createdAtValue);
+    } else if (createdAtValue is DateTime) {
+      parsedCreatedAt = createdAtValue;
+    }
+
     return UserProfile(
       uid: uid,
       email: (data['email'] as String?) ?? '',
-      displayName: (data['ten_hien_thi'] as String?) ?? '',
-      photoUrl: data['anh_dai_dien_url'] as String?,
-      phoneNumber: data['so_dien_thoai'] as String?,
-      emailVerified: data['email_da_xac_thuc'] as bool? ?? false,
-      createdAt: createdAtValue is Timestamp ? createdAtValue.toDate() : null,
+      displayName: (data['display_name'] as String?) ?? '',
+      photoUrl: data['avatar_url'] as String?,
+      phoneNumber: data['phone_number'] as String?,
+      emailVerified: data['email_verified'] as bool? ?? false,
+      createdAt: parsedCreatedAt,
     );
   }
 }

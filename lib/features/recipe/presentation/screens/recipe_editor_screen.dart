@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../data/models/recipe.dart';
 import '../../data/models/recipe_ingredient.dart';
@@ -120,6 +122,34 @@ class _RecipeEditorScreenState extends ConsumerState<RecipeEditorScreen> {
     _baseServingsController.dispose();
     _cookingMinutesController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickImage() async {
+    try {
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 85,
+      );
+      if (pickedFile != null) {
+        setState(() {
+          _imageUrlController.text = pickedFile.path;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Đã chọn ảnh thành công!')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Không thể chọn ảnh: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _onSave() async {
@@ -303,11 +333,23 @@ class _RecipeEditorScreenState extends ConsumerState<RecipeEditorScreen> {
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _imageUrlController,
-                    decoration: _inputDecoration('URL Hình ảnh (tùy chọn)', hint: 'https://example.com/image.jpg'),
+                    decoration: _inputDecoration(
+                      'Hình ảnh món ăn (URL hoặc thư viện)',
+                      hint: 'https://example.com/image.jpg',
+                    ).copyWith(
+                      suffixIcon: IconButton(
+                        icon: const Icon(
+                          Icons.photo_library_outlined,
+                          color: RecipeEditorScreen.primary,
+                        ),
+                        tooltip: 'Chọn ảnh từ thư viện thiết bị',
+                        onPressed: _pickImage,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<RecipeVisibility>(
-                    initialValue: _visibility,
+                    value: _visibility,
                     decoration: _inputDecoration('Quyền riêng tư'),
                     items: RecipeVisibility.values.map((v) {
                       return DropdownMenuItem(

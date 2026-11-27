@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'data/recipe_repository.dart';
 import 'presentation/screens/recipe_detail_screen.dart';
 import 'presentation/screens/recipe_editor_screen.dart';
 import 'presentation/screens/recipe_list_screen.dart';
@@ -7,6 +8,8 @@ import 'presentation/screens/recipe_list_screen.dart';
 /// Public interface and navigation entrypoints for `MOD-03: Recipe Management`.
 class RecipeModule {
   const RecipeModule._();
+
+  static final RecipeRepository repository = RecipeRepository();
 
   /// Route name for the recipe catalog library (Bottom Nav Tab 3: "Công thức").
   static const String listRoute = '/recipe/list';

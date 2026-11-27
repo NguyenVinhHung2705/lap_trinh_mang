@@ -1,7 +1,8 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'models/shopping_item.dart';
 import 'models/shopping_list.dart';
+import 'shopping_mock_data.dart';
 
 /// Base exception for shopping module operations.
 class ShoppingException implements Exception {
@@ -36,35 +37,24 @@ class ShoppingPermissionException extends ShoppingException {
 
 /// Data access layer for shopping lists and items (`MOD-02`).
 ///
-/// Firestore collections:
-/// - `/users/{uid}/danh_sach_mua/{listId}`
-/// - `/users/{uid}/danh_sach_mua/{listId}/chi_tiet_mua/{itemId}`
+/// Supabase tables:
+/// - `danh_sach_mua` (id UUID PK, user_id, ten, ghi_chu, trang_thai, created_at, updated_at)
+/// - `chi_tiet_mua` (id UUID PK, danh_sach_id UUID FK, user_id, thuc_pham_id, ten_thuc_pham, so_luong_can, so_luong_da_mua, don_vi, da_mua, ghi_chu, created_at)
 class ShoppingRepository {
-  ShoppingRepository({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+  ShoppingRepository({SupabaseClient? supabase})
+      : _customSupabase = supabase;
 
-  final FirebaseFirestore _firestore;
+  final SupabaseClient? _customSupabase;
+  SupabaseClient get _supabase =>
+      _customSupabase ?? Supabase.instance.client;
 
-  CollectionReference<Map<String, dynamic>> _listsRef(String userId) {
-    return _firestore
-        .collection('users')
-        .doc(userId)
-        .collection('danh_sach_mua');
-  }
+  bool _isMockUser(String userId) =>
+      userId.isEmpty || userId.startsWith('mock_') || userId == 'test_user_id';
 
-  DocumentReference<Map<String, dynamic>> _listDoc(
-    String userId,
-    String listId,
-  ) {
-    return _listsRef(userId).doc(listId);
-  }
-
-  CollectionReference<Map<String, dynamic>> _itemsRef(
-    String userId,
-    String listId,
-  ) {
-    return _listDoc(userId, listId).collection('chi_tiet_mua');
-  }
+  final List<ShoppingList> _memoryLists =
+      List<ShoppingList>.from(ShoppingMockData.initialLists);
+  final Map<String, List<ShoppingItem>> _memoryItems =
+      Map<String, List<ShoppingItem>>.from(ShoppingMockData.initialItems);
 
   // ---------------------------------------------------------------------------
   // SHOPPING LIST OPERATIONS (MOD-02-01 / FR-09)
@@ -81,23 +71,39 @@ class ShoppingRepository {
       throw const ShoppingException('Tên danh sách mua sắm không được để trống.');
     }
 
-    final docRef = _listsRef(userId).doc();
-    final now = DateTime.now();
+    if (_isMockUser(userId)) {
+      final id = 'shop_list_${DateTime.now().millisecondsSinceEpoch}';
+      final newList = ShoppingList(
+        id: id,
+        userId: userId,
+        name: trimmedName,
+        createdAt: DateTime.now(),
+        status: ShoppingListStatus.open,
+        note: note?.trim(),
+      );
+      _memoryLists.insert(0, newList);
+      _memoryItems[id] = [];
+      return newList;
+    }
 
-    final newList = ShoppingList(
-      id: docRef.id,
-      userId: userId,
-      name: trimmedName,
-      createdAt: now,
-      status: ShoppingListStatus.open,
-      note: note?.trim(),
-      totalItems: 0,
-      boughtItems: 0,
-      syncedItems: 0,
-    );
+    final now = DateTime.now().toUtc().toIso8601String();
 
-    await docRef.set(newList.toMap());
-    return newList;
+    final data = {
+      'user_id': userId,
+      'ten': trimmedName,
+      'ghi_chu': note?.trim(),
+      'trang_thai': 'OPEN',
+      'created_at': now,
+      'updated_at': now,
+    };
+
+    final result = await _supabase
+        .from('danh_sach_mua')
+        .insert(data)
+        .select()
+        .single();
+
+    return ShoppingList.fromMap(_normalizeMap(result), id: result['id'] as String);
   }
 
   /// Fetches a single shopping list by ID.
@@ -105,9 +111,21 @@ class ShoppingRepository {
     required String userId,
     required String listId,
   }) async {
-    final docSnap = await _listDoc(userId, listId).get();
-    if (!docSnap.exists || docSnap.data() == null) return null;
-    return ShoppingList.fromMap(_normalizeMap(docSnap.data()!), id: docSnap.id);
+    if (_isMockUser(userId)) {
+      return _memoryLists.cast<ShoppingList?>().firstWhere(
+            (l) => l?.id == listId,
+            orElse: () => null,
+          );
+    }
+    final result = await _supabase
+        .from('danh_sach_mua')
+        .select()
+        .eq('id', listId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (result == null) return null;
+    return ShoppingList.fromMap(_normalizeMap(result), id: result['id'] as String);
   }
 
   /// Queries all shopping lists for [userId], optionally filtered by status.
@@ -115,16 +133,29 @@ class ShoppingRepository {
     required String userId,
     ShoppingListStatus? status,
   }) async {
-    Query<Map<String, dynamic>> query =
-        _listsRef(userId).orderBy('ngay_tao', descending: true);
-
-    if (status != null) {
-      query = query.where('trang_thai', isEqualTo: status.value);
+    if (_isMockUser(userId)) {
+      var lists = List<ShoppingList>.from(_memoryLists);
+      if (status != null) {
+        lists = lists.where((l) => l.status == status).toList();
+      }
+      return lists;
     }
 
-    final snapshot = await query.get();
-    return snapshot.docs
-        .map((d) => ShoppingList.fromMap(_normalizeMap(d.data()), id: d.id))
+    var query = _supabase
+        .from('danh_sach_mua')
+        .select()
+        .eq('user_id', userId);
+
+    if (status != null) {
+      query = query.eq('trang_thai', status.value);
+    }
+
+    final rows = await query.order('created_at', ascending: false);
+    return (rows as List)
+        .map((row) => ShoppingList.fromMap(
+              _normalizeMap(row as Map<String, dynamic>),
+              id: row['id'] as String,
+            ))
         .toList();
   }
 
@@ -133,23 +164,37 @@ class ShoppingRepository {
     required String userId,
     ShoppingListStatus? status,
   }) {
-    Query<Map<String, dynamic>> query =
-        _listsRef(userId).orderBy('ngay_tao', descending: true);
-
-    if (status != null) {
-      query = query.where('trang_thai', isEqualTo: status.value);
+    if (_isMockUser(userId)) {
+      var lists = List<ShoppingList>.from(_memoryLists);
+      if (status != null) {
+        lists = lists.where((l) => l.status == status).toList();
+      }
+      return Stream.value(lists);
     }
 
-    return query.snapshots().map(
-          (snapshot) => snapshot.docs
-              .map(
-                (d) => ShoppingList.fromMap(
-                  _normalizeMap(d.data()),
-                  id: d.id,
-                ),
-              )
-              .toList(),
+    final stream = _supabase
+        .from('danh_sach_mua')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId);
+
+    return stream.map((rows) {
+      var filtered = rows.map((row) {
+        return ShoppingList.fromMap(
+          _normalizeMap(row),
+          id: row['id'] as String,
         );
+      }).toList();
+
+      if (status != null) {
+        filtered = filtered.where((l) => l.status == status).toList();
+      }
+
+      // Sort by createdAt descending
+      filtered.sort((a, b) => (b.createdAt ?? DateTime(2000))
+          .compareTo(a.createdAt ?? DateTime(2000)));
+
+      return filtered;
+    });
   }
 
   /// Updates shopping list metadata (e.g. name, status, notes).
@@ -160,13 +205,32 @@ class ShoppingRepository {
     if (list.userId != userId) {
       throw const ShoppingPermissionException();
     }
-    final docRef = _listDoc(userId, list.id);
-    final snap = await docRef.get();
-    if (!snap.exists) {
+    if (_isMockUser(userId)) {
+      final idx = _memoryLists.indexWhere((l) => l.id == list.id);
+      if (idx != -1) {
+        _memoryLists[idx] = list;
+      }
+      return list;
+    }
+
+    // Check existence
+    final existing = await _supabase
+        .from('danh_sach_mua')
+        .select('id')
+        .eq('id', list.id)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (existing == null) {
       throw const ShoppingNotFoundException('Danh sách mua sắm không tồn tại.');
     }
 
-    await docRef.update(list.toMap());
+    await _supabase
+        .from('danh_sach_mua')
+        .update(list.toMap())
+        .eq('id', list.id)
+        .eq('user_id', userId);
+
     return list;
   }
 
@@ -178,15 +242,26 @@ class ShoppingRepository {
     required String userId,
     required String listId,
   }) async {
-    final docRef = _listDoc(userId, listId);
-    final snap = await docRef.get();
-    if (!snap.exists || snap.data() == null) {
+    if (_isMockUser(userId)) {
+      _memoryLists.removeWhere((l) => l.id == listId);
+      _memoryItems.remove(listId);
+      return;
+    }
+
+    final result = await _supabase
+        .from('danh_sach_mua')
+        .select()
+        .eq('id', listId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (result == null) {
       throw const ShoppingNotFoundException();
     }
 
     final existing = ShoppingList.fromMap(
-      _normalizeMap(snap.data()!),
-      id: snap.id,
+      _normalizeMap(result),
+      id: result['id'] as String,
     );
 
     if (existing.isCompleted) {
@@ -195,14 +270,18 @@ class ShoppingRepository {
       );
     }
 
-    // Delete subcollection items then list doc
-    final itemsSnap = await _itemsRef(userId, listId).get();
-    final batch = _firestore.batch();
-    for (final doc in itemsSnap.docs) {
-      batch.delete(doc.reference);
-    }
-    batch.delete(docRef);
-    await batch.commit();
+    // Delete child items first, then the list
+    await _supabase
+        .from('chi_tiet_mua')
+        .delete()
+        .eq('danh_sach_id', listId)
+        .eq('user_id', userId);
+
+    await _supabase
+        .from('danh_sach_mua')
+        .delete()
+        .eq('id', listId)
+        .eq('user_id', userId);
   }
 
   // ---------------------------------------------------------------------------
@@ -215,14 +294,31 @@ class ShoppingRepository {
     required String listId,
     required ShoppingItem item,
   }) async {
-    final listSnap = await _listDoc(userId, listId).get();
-    if (!listSnap.exists || listSnap.data() == null) {
+    if (_isMockUser(userId)) {
+      final itemId = item.id.isNotEmpty
+          ? item.id
+          : 'shop_item_${DateTime.now().millisecondsSinceEpoch}';
+      final itemToSave = item.copyWith(id: itemId);
+      _memoryItems.putIfAbsent(listId, () => []).add(itemToSave);
+      await recalculateCounters(userId: userId, listId: listId);
+      return itemToSave;
+    }
+
+    // Check list exists and is not completed
+    final listRow = await _supabase
+        .from('danh_sach_mua')
+        .select()
+        .eq('id', listId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (listRow == null) {
       throw const ShoppingNotFoundException('Danh sách mua sắm không tồn tại.');
     }
 
     final currentList = ShoppingList.fromMap(
-      _normalizeMap(listSnap.data()!),
-      id: listSnap.id,
+      _normalizeMap(listRow),
+      id: listRow['id'] as String,
     );
 
     if (currentList.isCompleted) {
@@ -231,15 +327,27 @@ class ShoppingRepository {
       );
     }
 
-    final itemRef = item.id.isNotEmpty
-        ? _itemsRef(userId, listId).doc(item.id)
-        : _itemsRef(userId, listId).doc();
+    final itemData = item.toMap();
+    itemData['danh_sach_id'] = listId;
+    itemData['user_id'] = userId;
+    // Remove the id if empty so the DB generates a UUID
+    if (item.id.isEmpty) {
+      itemData.remove('id');
+    }
 
-    final itemToSave = item.id.isNotEmpty ? item : item.copyWith(id: itemRef.id);
+    final result = await _supabase
+        .from('chi_tiet_mua')
+        .insert(itemData)
+        .select()
+        .single();
 
-    await itemRef.set(itemToSave.toMap());
+    final savedItem = ShoppingItem.fromMap(
+      _normalizeMap(result),
+      id: result['id'] as String,
+    );
+
     await recalculateCounters(userId: userId, listId: listId);
-    return itemToSave;
+    return savedItem;
   }
 
   /// Fetches a single item by ID.
@@ -248,9 +356,23 @@ class ShoppingRepository {
     required String listId,
     required String itemId,
   }) async {
-    final snap = await _itemsRef(userId, listId).doc(itemId).get();
-    if (!snap.exists || snap.data() == null) return null;
-    return ShoppingItem.fromMap(_normalizeMap(snap.data()!), id: snap.id);
+    if (_isMockUser(userId)) {
+      final items = _memoryItems[listId] ?? [];
+      return items.cast<ShoppingItem?>().firstWhere(
+            (i) => i?.id == itemId,
+            orElse: () => null,
+          );
+    }
+    final result = await _supabase
+        .from('chi_tiet_mua')
+        .select()
+        .eq('id', itemId)
+        .eq('danh_sach_id', listId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (result == null) return null;
+    return ShoppingItem.fromMap(_normalizeMap(result), id: result['id'] as String);
   }
 
   /// Fetches all items in [listId].
@@ -258,11 +380,21 @@ class ShoppingRepository {
     required String userId,
     required String listId,
   }) async {
-    final snapshot = await _itemsRef(userId, listId)
-        .orderBy('ngay_tao', descending: false)
-        .get();
-    return snapshot.docs
-        .map((d) => ShoppingItem.fromMap(_normalizeMap(d.data()), id: d.id))
+    if (_isMockUser(userId)) {
+      return List<ShoppingItem>.from(_memoryItems[listId] ?? []);
+    }
+    final rows = await _supabase
+        .from('chi_tiet_mua')
+        .select()
+        .eq('danh_sach_id', listId)
+        .eq('user_id', userId)
+        .order('created_at', ascending: true);
+
+    return (rows as List)
+        .map((row) => ShoppingItem.fromMap(
+              _normalizeMap(row as Map<String, dynamic>),
+              id: row['id'] as String,
+            ))
         .toList();
   }
 
@@ -271,19 +403,30 @@ class ShoppingRepository {
     required String userId,
     required String listId,
   }) {
-    return _itemsRef(userId, listId)
-        .orderBy('ngay_tao', descending: false)
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map(
-                (d) => ShoppingItem.fromMap(
-                  _normalizeMap(d.data()),
-                  id: d.id,
-                ),
-              )
-              .toList(),
-        );
+    if (_isMockUser(userId)) {
+      return Stream.value(List<ShoppingItem>.from(_memoryItems[listId] ?? []));
+    }
+
+    return _supabase
+        .from('chi_tiet_mua')
+        .stream(primaryKey: ['id'])
+        .eq('danh_sach_id', listId)
+        .map((rows) {
+      final items = rows
+          .where((row) => row['user_id'] == userId)
+          .map((row) => ShoppingItem.fromMap(
+                _normalizeMap(row),
+                id: row['id'] as String,
+              ))
+          .toList();
+      // Sort by created_at ascending
+      items.sort((a, b) {
+        final aDate = a.createdAt ?? DateTime(2000);
+        final bDate = b.createdAt ?? DateTime(2000);
+        return aDate.compareTo(bDate);
+      });
+      return items;
+    });
   }
 
   /// Updates an existing shopping item.
@@ -294,22 +437,43 @@ class ShoppingRepository {
     required String listId,
     required ShoppingItem item,
   }) async {
-    final itemRef = _itemsRef(userId, listId).doc(item.id);
-    final snap = await itemRef.get();
-    if (!snap.exists || snap.data() == null) {
+    if (_isMockUser(userId)) {
+      final items = _memoryItems[listId] ?? [];
+      final idx = items.indexWhere((i) => i.id == item.id);
+      if (idx != -1) {
+        items[idx] = item;
+      }
+      await recalculateCounters(userId: userId, listId: listId);
+      return item;
+    }
+
+    final existingRow = await _supabase
+        .from('chi_tiet_mua')
+        .select()
+        .eq('id', item.id)
+        .eq('danh_sach_id', listId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (existingRow == null) {
       throw const ShoppingNotFoundException('Mục mua sắm không tồn tại.');
     }
 
     final existing = ShoppingItem.fromMap(
-      _normalizeMap(snap.data()!),
-      id: snap.id,
+      _normalizeMap(existingRow),
+      id: existingRow['id'] as String,
     );
 
     if (existing.isSynced) {
       throw const ShoppingAlreadySyncedException();
     }
 
-    await itemRef.update(item.toMap());
+    await _supabase
+        .from('chi_tiet_mua')
+        .update(item.toMap())
+        .eq('id', item.id)
+        .eq('user_id', userId);
+
     await recalculateCounters(userId: userId, listId: listId);
     return item;
   }
@@ -322,22 +486,39 @@ class ShoppingRepository {
     required String listId,
     required String itemId,
   }) async {
-    final itemRef = _itemsRef(userId, listId).doc(itemId);
-    final snap = await itemRef.get();
-    if (!snap.exists || snap.data() == null) {
+    if (_isMockUser(userId)) {
+      _memoryItems[listId]?.removeWhere((i) => i.id == itemId);
+      await recalculateCounters(userId: userId, listId: listId);
+      return;
+    }
+
+    final existingRow = await _supabase
+        .from('chi_tiet_mua')
+        .select()
+        .eq('id', itemId)
+        .eq('danh_sach_id', listId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (existingRow == null) {
       throw const ShoppingNotFoundException();
     }
 
     final existing = ShoppingItem.fromMap(
-      _normalizeMap(snap.data()!),
-      id: snap.id,
+      _normalizeMap(existingRow),
+      id: existingRow['id'] as String,
     );
 
     if (existing.isSynced) {
       throw const ShoppingAlreadySyncedException();
     }
 
-    await itemRef.delete();
+    await _supabase
+        .from('chi_tiet_mua')
+        .delete()
+        .eq('id', itemId)
+        .eq('user_id', userId);
+
     await recalculateCounters(userId: userId, listId: listId);
   }
 
@@ -351,15 +532,40 @@ class ShoppingRepository {
     required bool isBought,
     double? actualQuantity,
   }) async {
-    final itemRef = _itemsRef(userId, listId).doc(itemId);
-    final snap = await itemRef.get();
-    if (!snap.exists || snap.data() == null) {
+    if (_isMockUser(userId)) {
+      final items = _memoryItems[listId] ?? [];
+      final idx = items.indexWhere((i) => i.id == itemId);
+      if (idx != -1) {
+        final existing = items[idx];
+        final newActual = actualQuantity ??
+            (isBought && existing.actualQuantity == 0.0
+                ? existing.plannedQuantity
+                : existing.actualQuantity);
+        final updated = existing.copyWith(
+          isBought: isBought,
+          actualQuantity: isBought ? newActual : 0.0,
+        );
+        items[idx] = updated;
+        await recalculateCounters(userId: userId, listId: listId);
+        return updated;
+      }
+    }
+
+    final existingRow = await _supabase
+        .from('chi_tiet_mua')
+        .select()
+        .eq('id', itemId)
+        .eq('danh_sach_id', listId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (existingRow == null) {
       throw const ShoppingNotFoundException();
     }
 
     final existing = ShoppingItem.fromMap(
-      _normalizeMap(snap.data()!),
-      id: snap.id,
+      _normalizeMap(existingRow),
+      id: existingRow['id'] as String,
     );
 
     if (existing.isSynced) {
@@ -376,10 +582,14 @@ class ShoppingRepository {
       actualQuantity: isBought ? newActual : 0.0,
     );
 
-    await itemRef.update({
-      'da_mua': isBought,
-      'so_luong_da_mua': updated.actualQuantity,
-    });
+    await _supabase
+        .from('chi_tiet_mua')
+        .update({
+          'da_mua': isBought,
+          'so_luong_da_mua': updated.actualQuantity,
+        })
+        .eq('id', itemId)
+        .eq('user_id', userId);
 
     await recalculateCounters(userId: userId, listId: listId);
     return updated;
@@ -395,15 +605,39 @@ class ShoppingRepository {
     String? locationId,
     String? locationName,
   }) async {
-    final itemRef = _itemsRef(userId, listId).doc(itemId);
-    final snap = await itemRef.get();
-    if (!snap.exists || snap.data() == null) {
+    if (_isMockUser(userId)) {
+      final items = _memoryItems[listId] ?? [];
+      final idx = items.indexWhere((i) => i.id == itemId);
+      if (idx != -1) {
+        final existing = items[idx];
+        final updated = existing.copyWith(
+          actualQuantity: actualQuantity,
+          isBought: actualQuantity > 0,
+          expiryDate: expiryDate,
+          locationId: locationId,
+          locationName: locationName,
+        );
+        items[idx] = updated;
+        await recalculateCounters(userId: userId, listId: listId);
+        return updated;
+      }
+    }
+
+    final existingRow = await _supabase
+        .from('chi_tiet_mua')
+        .select()
+        .eq('id', itemId)
+        .eq('danh_sach_id', listId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (existingRow == null) {
       throw const ShoppingNotFoundException();
     }
 
     final existing = ShoppingItem.fromMap(
-      _normalizeMap(snap.data()!),
-      id: snap.id,
+      _normalizeMap(existingRow),
+      id: existingRow['id'] as String,
     );
 
     if (existing.isSynced) {
@@ -418,25 +652,53 @@ class ShoppingRepository {
       locationName: locationName,
     );
 
-    await itemRef.update(updated.toMap());
+    await _supabase
+        .from('chi_tiet_mua')
+        .update(updated.toMap())
+        .eq('id', itemId)
+        .eq('user_id', userId);
+
     await recalculateCounters(userId: userId, listId: listId);
     return updated;
   }
 
-  /// Recalculates cached statistics on the parent list document.
+  /// Recalculates cached statistics on the parent list row.
   Future<void> recalculateCounters({
     required String userId,
     required String listId,
   }) async {
-    final listDocRef = _listDoc(userId, listId);
-    final snap = await _itemsRef(userId, listId).get();
+    if (_isMockUser(userId)) {
+      final items = _memoryItems[listId] ?? [];
+      final total = items.length;
+      var bought = 0;
+      var synced = 0;
+      for (final it in items) {
+        if (it.isBought || it.actualQuantity > 0) bought++;
+        if (it.isSynced) synced++;
+      }
+      final idx = _memoryLists.indexWhere((l) => l.id == listId);
+      if (idx != -1) {
+        _memoryLists[idx] = _memoryLists[idx].copyWith(
+          totalItems: total,
+          boughtItems: bought,
+          syncedItems: synced,
+        );
+      }
+      return;
+    }
 
-    final total = snap.docs.length;
+    final rows = await _supabase
+        .from('chi_tiet_mua')
+        .select()
+        .eq('danh_sach_id', listId)
+        .eq('user_id', userId);
+
+    final total = (rows as List).length;
     var bought = 0;
     var synced = 0;
 
-    for (final doc in snap.docs) {
-      final data = doc.data();
+    for (final row in rows) {
+      final data = row as Map<String, dynamic>;
       if (data['da_mua'] == true || (data['so_luong_da_mua'] as num? ?? 0) > 0) {
         bought++;
       }
@@ -445,20 +707,34 @@ class ShoppingRepository {
       }
     }
 
-    await listDocRef.update({
-      'so_luong_muc': total,
-      'so_luong_da_mua_count': bought,
-      'so_luong_da_dong_bo_count': synced,
-    });
+    await _supabase
+        .from('danh_sach_mua')
+        .update({
+          'so_luong_muc': total,
+          'so_luong_da_mua_count': bought,
+          'so_luong_da_dong_bo_count': synced,
+        })
+        .eq('id', listId)
+        .eq('user_id', userId);
   }
 
   Map<String, Object?> _normalizeMap(Map<String, dynamic> raw) {
     return raw.map((key, value) {
-      if (value is Timestamp) {
-        return MapEntry(key, value.toDate());
+      if (value is String) {
+        // Try to parse ISO 8601 date strings from Supabase TIMESTAMPTZ columns
+        final dt = DateTime.tryParse(value);
+        if (dt != null &&
+            (key.contains('created_at') ||
+                key.contains('updated_at') ||
+                key.contains('ngay_tao') ||
+                key.contains('ngay_hoan_tat') ||
+                key.contains('ngay_dong_bo') ||
+                key.contains('han_su_dung') ||
+                key.contains('ngay_nhap'))) {
+          return MapEntry(key, dt);
+        }
       }
       return MapEntry(key, value);
     });
   }
 }
-

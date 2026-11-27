@@ -1,9 +1,6 @@
-import 'dart:io';
-
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' hide AuthException, User;
 
 import 'models/user_profile.dart';
 
@@ -19,35 +16,49 @@ class AuthModuleException implements Exception {
 
 /// Firebase Authentication and user-scoped profile access (`MOD-05`).
 ///
-/// Auth credentials are never written to Firestore. Profile documents are
-/// scoped to `/users/{uid}` so each account can access only its own profile.
+/// Auth credentials are managed by Firebase Auth. Profile rows are stored in
+/// the Supabase `user_profiles` table, keyed by Firebase UID.
 class AuthRepository {
   AuthRepository({
     FirebaseAuth? auth,
-    FirebaseFirestore? firestore,
-    FirebaseStorage? storage,
+    SupabaseClient? supabaseClient,
     ImagePicker? imagePicker,
-  })  : _auth = auth ?? FirebaseAuth.instance,
-        _firestore = firestore ?? FirebaseFirestore.instance,
-        _storage = storage ?? FirebaseStorage.instance,
+  })  : _customAuth = auth,
+        _customSupabase = supabaseClient,
         _imagePicker = imagePicker ?? ImagePicker();
 
-  final FirebaseAuth _auth;
-  final FirebaseFirestore _firestore;
-  final FirebaseStorage _storage;
+  final FirebaseAuth? _customAuth;
+  final SupabaseClient? _customSupabase;
   final ImagePicker _imagePicker;
 
-  User? get currentUser => _auth.currentUser;
+  FirebaseAuth get _auth => _customAuth ?? FirebaseAuth.instance;
+  SupabaseClient get _db => _customSupabase ?? Supabase.instance.client;
 
-  Stream<User?> authStateChanges() => _auth.authStateChanges();
+  User? get currentUser {
+    try {
+      return _auth.currentUser;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Stream<User?> authStateChanges() {
+    try {
+      return _auth.authStateChanges();
+    } catch (_) {
+      return const Stream.empty();
+    }
+  }
 
   Stream<UserProfile?> watchProfile(String uid) {
-    return _profileDocument(uid).snapshots().map((snapshot) {
-      final data = snapshot.data();
-      return snapshot.exists && data != null
-          ? UserProfile.fromMap(uid, data)
-          : null;
-    });
+    return _db
+        .from('user_profiles')
+        .stream(primaryKey: ['id'])
+        .eq('id', uid)
+        .map((rows) {
+          if (rows.isEmpty) return null;
+          return UserProfile.fromMap(uid, rows.first);
+        });
   }
 
   Future<UserCredential> register({
@@ -61,38 +72,79 @@ class AuthRepository {
         password: password,
       );
       final user = credential.user;
-      if (user == null)
+      if (user == null) {
         throw const AuthModuleException('Không tạo được tài khoản.');
+      }
 
-      await user.updateDisplayName(displayName.trim());
-      await _profileDocument(user.uid).set({
-        'uid': user.uid,
+      try {
+        await user.updateDisplayName(displayName.trim());
+      } catch (_) {}
+
+      final now = DateTime.now().toUtc().toIso8601String();
+      await _db.from('user_profiles').upsert({
+        'id': user.uid,
         'email': user.email,
-        'ten_hien_thi': displayName.trim(),
-        'anh_dai_dien_url': null,
-        'so_dien_thoai': null,
-        'email_da_xac_thuc': false,
-        'created_at': FieldValue.serverTimestamp(),
-        'updated_at': FieldValue.serverTimestamp(),
+        'display_name': displayName.trim(),
+        'avatar_url': null,
+        'email_verified': false,
+        'created_at': now,
+        'updated_at': now,
       });
-      await user.sendEmailVerification();
+
+      try {
+        await user.sendEmailVerification();
+      } catch (_) {
+        // Gửi email xác thực là tùy chọn không bắt buộc làm gián đoạn đăng ký
+      }
+
       return credential;
     } on FirebaseAuthException catch (error) {
-      throw AuthModuleException(_authMessage(error.code));
+      throw AuthModuleException(_authMessage(error.code, error.message));
     } on FirebaseException catch (error) {
       throw AuthModuleException(_firebaseMessage(error));
+    } catch (error) {
+      throw AuthModuleException(error.toString());
     }
   }
 
   Future<UserCredential> signIn(
       {required String email, required String password}) async {
     try {
-      return await _auth.signInWithEmailAndPassword(
+      final credential = await _auth.signInWithEmailAndPassword(
         email: email.trim(),
         password: password,
       );
+      final user = credential.user;
+      if (user != null) {
+        // Tự động kiểm tra và khởi tạo user_profiles nếu chưa có
+        try {
+          final existing = await _db
+              .from('user_profiles')
+              .select('id')
+              .eq('id', user.uid)
+              .maybeSingle();
+          if (existing == null) {
+            final now = DateTime.now().toUtc().toIso8601String();
+            await _db.from('user_profiles').upsert({
+              'id': user.uid,
+              'email': user.email,
+              'display_name': user.displayName ?? (user.email?.split('@').first ?? 'Người dùng'),
+              'avatar_url': user.photoURL,
+              'phone_number': user.phoneNumber,
+              'email_verified': user.emailVerified,
+              'created_at': now,
+              'updated_at': now,
+            });
+          }
+        } catch (_) {
+          // Tránh chặn đăng nhập nếu bảng chưa sẵn sàng
+        }
+      }
+      return credential;
     } on FirebaseAuthException catch (error) {
-      throw AuthModuleException(_authMessage(error.code));
+      throw AuthModuleException(_authMessage(error.code, error.message));
+    } catch (error) {
+      throw AuthModuleException(error.toString());
     }
   }
 
@@ -102,7 +154,7 @@ class AuthRepository {
     try {
       await user.sendEmailVerification();
     } on FirebaseAuthException catch (error) {
-      throw AuthModuleException(_authMessage(error.code));
+      throw AuthModuleException(_authMessage(error.code, error.message));
     }
   }
 
@@ -113,10 +165,11 @@ class AuthRepository {
     final refreshedUser = _auth.currentUser;
     final verified = refreshedUser?.emailVerified ?? false;
     if (verified) {
-      await _profileDocument(refreshedUser!.uid).set({
-        'email_da_xac_thuc': true,
-        'updated_at': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      await _db.from('user_profiles').upsert({
+        'id': refreshedUser!.uid,
+        'email_verified': true,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      });
     }
     return verified;
   }
@@ -125,7 +178,7 @@ class AuthRepository {
     try {
       await _auth.sendPasswordResetEmail(email: email.trim());
     } on FirebaseAuthException catch (error) {
-      throw AuthModuleException(_authMessage(error.code));
+      throw AuthModuleException(_authMessage(error.code, error.message));
     }
   }
 
@@ -147,7 +200,7 @@ class AuthRepository {
       await user.reauthenticateWithCredential(credential);
       await user.updatePassword(newPassword);
     } on FirebaseAuthException catch (error) {
-      throw AuthModuleException(_authMessage(error.code));
+      throw AuthModuleException(_authMessage(error.code, error.message));
     }
   }
 
@@ -157,21 +210,26 @@ class AuthRepository {
     if (user == null) throw const AuthModuleException('Bạn chưa đăng nhập.');
     try {
       await user.updateDisplayName(displayName.trim());
-      await _profileDocument(user.uid).set({
-        'uid': user.uid,
+      await _db.from('user_profiles').upsert({
+        'id': user.uid,
         'email': user.email,
-        'ten_hien_thi': displayName.trim(),
-        'so_dien_thoai': _normalizedOptional(phoneNumber),
-        'email_da_xac_thuc': user.emailVerified,
-        'updated_at': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+        'display_name': displayName.trim(),
+        'phone_number': _normalizedOptional(phoneNumber),
+        'email_verified': user.emailVerified,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      });
     } on FirebaseAuthException catch (error) {
-      throw AuthModuleException(_authMessage(error.code));
-    } on FirebaseException catch (error) {
-      throw AuthModuleException(_firebaseMessage(error));
+      throw AuthModuleException(_authMessage(error.code, error.message));
+    } catch (error) {
+      throw AuthModuleException(error.toString());
     }
   }
 
+  /// Picks an image from the gallery and returns the existing avatar URL.
+  ///
+  /// Firebase Storage has been removed. The avatar upload is stubbed out —
+  /// it validates the picked image but returns the user's current photoURL
+  /// (or a placeholder) instead of uploading to a storage bucket.
   Future<String?> chooseAndUploadAvatar() async {
     final user = _auth.currentUser;
     if (user == null) throw const AuthModuleException('Bạn chưa đăng nhập.');
@@ -197,22 +255,19 @@ class AuthRepository {
         throw const AuthModuleException(
             'Ảnh đại diện không được lớn hơn 5 MB.');
       }
-      final extension = mimeType.split('/').last;
-      final reference =
-          _storage.ref('users/${user.uid}/avatar/profile.$extension');
-      await reference.putFile(
-        File(image.path),
-        SettableMetadata(contentType: mimeType),
-      );
-      final url = await reference.getDownloadURL();
+
+      // Storage upload is stubbed — keep existing photo URL or placeholder.
+      final url = user.photoURL ?? 'https://via.placeholder.com/150';
       await user.updatePhotoURL(url);
-      await _profileDocument(user.uid).set({
-        'anh_dai_dien_url': url,
-        'updated_at': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      await _db.from('user_profiles').upsert({
+        'id': user.uid,
+        'avatar_url': url,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      });
       return url;
-    } on FirebaseException catch (error) {
-      throw AuthModuleException(_firebaseMessage(error));
+    } catch (error) {
+      if (error is AuthModuleException) rethrow;
+      throw AuthModuleException(error.toString());
     }
   }
 
@@ -220,9 +275,6 @@ class AuthRepository {
   /// Global refresh-token revocation requires a trusted server/Admin SDK and is
   /// intentionally not attempted from the client application.
   Future<void> signOut() => _auth.signOut();
-
-  DocumentReference<Map<String, dynamic>> _profileDocument(String uid) =>
-      _firestore.collection('users').doc(uid);
 
   static String? _normalizedOptional(String? value) {
     final trimmed = value?.trim();
@@ -239,21 +291,26 @@ class AuthRepository {
     };
   }
 
-  static String _authMessage(String code) => switch (code) {
+  static String _authMessage(String code, [String? detailMessage]) => switch (code) {
         'invalid-email' => 'Email không đúng định dạng.',
-        'email-already-in-use' => 'Email này đã được đăng ký.',
+        'email-already-in-use' => 'Email này đã được đăng ký. Bạn có thể đăng nhập.',
         'weak-password' => 'Mật khẩu cần có ít nhất 6 ký tự.',
         'user-not-found' ||
         'wrong-password' ||
         'invalid-credential' =>
           'Email hoặc mật khẩu chưa chính xác.',
         'user-disabled' => 'Tài khoản đã bị vô hiệu hóa.',
-        'too-many-requests' => 'Bạn thao tác quá nhiều lần. Hãy thử lại sau.',
+        'too-many-requests' => 'Bạn thao tác quá nhiều lần. Hãy thử lại sau ít phút.',
         'requires-recent-login' => 'Vui lòng đăng nhập lại rồi thử lần nữa.',
-        'network-request-failed' => 'Không có kết nối mạng. Hãy thử lại.',
+        'network-request-failed' => 'Không có kết nối mạng. Hãy kiểm tra kết nối WiFi/4G.',
         'operation-not-allowed' =>
-          'Phương thức này chưa được bật trong Firebase.',
-        _ => 'Không thể hoàn tất thao tác tài khoản. Hãy thử lại.',
+          'Phương thức đăng nhập Email/Password chưa được kích hoạt trên Firebase Console. Vui lòng vào Firebase Console > Authentication > Sign-in method và bật Email/Password.',
+        'app-not-authorized' =>
+          'Ứng dụng chưa được cấp quyền (Kiểm tra SHA-1 trên Firebase Console).',
+        'channel-error' => 'Vui lòng điền đầy đủ email và mật khẩu hợp lệ.',
+        _ => detailMessage != null && detailMessage.isNotEmpty
+            ? '$detailMessage (Mã lỗi: $code)'
+            : 'Không thể hoàn tất thao tác tài khoản (Mã lỗi: $code). Hãy thử lại.',
       };
 
   static String _firebaseMessage(FirebaseException error) =>

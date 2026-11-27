@@ -1,6 +1,6 @@
-import '../models/food_item.dart';
-import '../models/food_batch.dart';
-import '../models/stock_movement.dart';
+import './models/food_item.dart';
+import './models/food_batch.dart';
+import './models/stock_movement.dart';
 
 /// Dữ liệu mẫu (In-Memory Mock) phục vụ chạy test giao diện & fallback khi offline
 class PantryMockData {
