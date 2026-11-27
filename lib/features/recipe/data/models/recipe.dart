@@ -148,31 +148,30 @@ class Recipe {
     };
   }
 
-  /// Deserializes a Firestore map into [Recipe].
+  /// Deserializes a map into [Recipe] (supports both Firestore & Supabase row keys).
   factory Recipe.fromMap(Map<String, Object?> map, {required String id}) {
-    final rawAuthorId = map['ma_tac_gia'] as String?;
-    final rawName = map['ten_mon'] as String?;
-    final rawInstructions = map['cach_lam'] as String? ?? '';
-    final rawServings = (map['khau_phan'] as num?)?.toDouble();
-    final rawCookingTime = (map['thoi_gian_nau'] as num?)?.toInt();
-
-    if (rawAuthorId == null || rawName == null || rawServings == null) {
-      throw FormatException('Missing required fields in Recipe map for id=$id');
-    }
+    final rawAuthorId = (map['ma_tac_gia'] ?? map['author_id']) as String? ?? 'system';
+    final rawName = (map['ten_mon'] ?? map['ten']) as String? ?? 'Công thức';
+    final rawDescription = map['mo_ta'] as String?;
+    final rawInstructions = (map['cach_lam'] ?? map['mo_ta'] ?? 'Sơ chế và chế biến theo khẩu phần.') as String;
+    final rawServings = ((map['khau_phan'] ?? map['base_servings']) as num?)?.toDouble() ?? 1.0;
+    final rawCookingTime = ((map['thoi_gian_nau'] ?? map['cooking_minutes']) as num?)?.toInt() ?? 0;
+    final rawSource = (map['nguon'] ?? map['loai']) as String? ?? 'USER';
+    final rawVisibility = (map['pham_vi_hien_thi'] ?? map['loai']) as String? ?? 'PRIVATE';
 
     return Recipe(
       id: id,
       authorId: rawAuthorId,
       name: rawName,
-      description: map['mo_ta'] as String?,
+      description: rawDescription,
       instructions: rawInstructions,
       imageUrl: map['hinh_anh'] as String?,
       baseServings: rawServings,
-      cookingMinutes: rawCookingTime ?? 0,
-      source: RecipeSource.fromValue(map['nguon'] as String? ?? 'USER'),
-      visibility: RecipeVisibility.fromValue(map['pham_vi_hien_thi'] as String? ?? 'PRIVATE'),
-      createdAt: _parseNullableDateTime(map['ngay_tao']),
-      updatedAt: _parseNullableDateTime(map['ngay_cap_nhat']),
+      cookingMinutes: rawCookingTime,
+      source: RecipeSource.fromValue(rawSource),
+      visibility: RecipeVisibility.fromValue(rawVisibility),
+      createdAt: _parseNullableDateTime(map['ngay_tao'] ?? map['created_at']),
+      updatedAt: _parseNullableDateTime(map['ngay_cap_nhat'] ?? map['updated_at']),
     );
   }
 

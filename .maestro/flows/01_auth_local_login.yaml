@@ -1,0 +1,13 @@
+appId: com.example.smart_food_life
+---
+# MOD-05 | TC-AUTH-01: Đăng nhập bằng tài khoản Local
+- launchApp:
+    clearState: true
+- assertVisible: "Đăng nhập"
+- assertVisible: "Chào mừng trở lại"
+- tapOn: "Dùng tài khoản Local (Dùng thử)"
+# Home dashboard
+- assertVisible: "Tổng quan hôm nay"
+- assertVisible: "Thao tác nhanh"
+- assertVisible: "Thêm kho"
+- assertVisible: "Lên lịch"

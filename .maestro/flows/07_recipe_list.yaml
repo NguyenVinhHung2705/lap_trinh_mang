@@ -1,0 +1,15 @@
+appId: com.example.smart_food_life
+---
+# MOD-03 | TC-RECIPE-01: Xem & tìm kiếm công thức
+- runFlow: 00_helpers.yaml
+- tapOn: "Tạo món"
+# Thanh tìm kiếm thực tế: "Tìm món ăn hoặc nguyên liệu..."
+- assertVisible: "Tìm món ăn hoặc nguyên liệu..."
+# Tab filter
+- assertVisible: "Tất cả"
+- assertVisible: "Của tôi"
+- assertVisible: "Hệ thống"
+- assertVisible: "Đã lưu"
+# Tìm kiếm
+- tapOn: "Tìm món ăn hoặc nguyên liệu..."
+- inputText: "Trứng"

@@ -1,0 +1,14 @@
+appId: com.example.smart_food_life
+---
+# MOD-04 | TC-MEAL-06: Hủy kế hoạch bữa ăn
+- runFlow: 09_meal_view_calendar.yaml
+- tapOn: "Bữa Sáng"
+- assertVisible: "Chi tiết bữa ăn"
+- scrollUntilVisible:
+    element:
+      text: "Hủy kế hoạch"
+    direction: DOWN
+- tapOn: "Hủy kế hoạch"
+- assertVisible: "Hủy kế hoạch"
+- tapOn: "Hủy kế hoạch"
+- assertVisible: "Đã hủy"

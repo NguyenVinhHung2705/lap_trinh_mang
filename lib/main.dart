@@ -1,4 +1,5 @@
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -14,24 +15,19 @@ import 'features/auth/presentation/providers/auth_providers.dart';
 import 'features/auth/presentation/screens/sign_in_screen.dart';
 import 'shared/theme/app_colors.dart';
 
-Future<void> main() async {
-  // Đảm bảo Flutter binding đã sẵn sàng
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  // Khởi tạo Firebase trước khi chạy ứng dụng
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
+  // THÊM:
+  await Supabase.initialize(
+    url: 'https://jqooervaawgfwsvmukav.supabase.co',   
+    anonKey: 'sb_publishable_l7_3SHr60bpr6lIB34GK4A_6TGYM4GI',                 
   );
 
-  // Gieo dữ liệu hạt giống ban đầu cho công thức nếu Cloud Firestore trống
-  RecipeModule.repository.seedInitialRecipesIfEmpty().ignore();
-
-  // Khởi chạy ứng dụng sau khi Firebase đã sẵn sàng
-  runApp(
-    const ProviderScope(
-      child: SmartFoodLifeApp(),
-    ),
-  );
+  runApp(const ProviderScope(child: SmartFoodLifeApp()));
 }
 
 class SmartFoodLifeApp extends ConsumerWidget {
@@ -45,6 +41,36 @@ class SmartFoodLifeApp extends ConsumerWidget {
     return MaterialApp(
       title: 'Smart Food Life',
       debugShowCheckedModeBanner: false,
+      builder: (context, child) {
+        if (!kIsWeb || child == null) return child ?? const SizedBox.shrink();
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            // Trên màn hình điện thoại thật thì hiển thị tràn màn hình tự nhiên.
+            if (constraints.maxWidth <= 500) return child;
+            return ColoredBox(
+              color: const Color(0xFFEAEFEA),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 430),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.10),
+                          blurRadius: 24,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: child,
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: AppColors.primary,

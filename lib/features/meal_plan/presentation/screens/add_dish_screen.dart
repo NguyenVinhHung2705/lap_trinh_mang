@@ -8,12 +8,12 @@ import '../providers/meal_calendar_provider.dart';
 
 /// Provides [RecipeCatalogReader] (`MOD-03` integration point).
 final recipeCatalogReaderProvider = Provider<RecipeCatalogReader>((ref) {
-  return FirestoreRecipeCatalogReader();
+  return SupabaseRecipeCatalogReader();
 });
 
 /// Provides [FoodCatalogReader] (`MOD-01` integration point).
 final foodCatalogReaderProvider = Provider<FoodCatalogReader>((ref) {
-  return FirestoreFoodCatalogReader();
+  return SupabaseFoodCatalogReader();
 });
 
 /// Provides [MealService] for adding and managing meal items.

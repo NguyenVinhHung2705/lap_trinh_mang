@@ -1,0 +1,9 @@
+appId: com.example.smart_food_life
+---
+# MOD-03 | TC-RECIPE-02: Tạo công thức mới
+- runFlow: 00_helpers.yaml
+- tapOn: "Tạo món"
+- assertVisible: "Tìm món ăn hoặc nguyên liệu..."
+# Nút tạo công thức trong recipe_list: "Tạo công thức mới"
+- tapOn: "Tạo công thức mới"
+- assertVisible: "Công thức mới"

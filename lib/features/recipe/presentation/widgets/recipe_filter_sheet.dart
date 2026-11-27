@@ -97,7 +97,6 @@ class RecipeFilterSheet extends StatelessWidget {
               const SizedBox(height: 16),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                activeThumbColor: primary,
                 title: const Text(
                   'Chỉ hiển thị công thức đã lưu',
                   style: TextStyle(

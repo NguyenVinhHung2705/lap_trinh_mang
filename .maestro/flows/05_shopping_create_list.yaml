@@ -1,0 +1,16 @@
+appId: com.example.smart_food_life
+---
+# MOD-02 | TC-SHOP-01: Tạo danh sách mua sắm
+- runFlow: 00_helpers.yaml
+- tapOn: "Tạo DS mua"
+# FAB label thực tế: "Tạo danh sách mới"
+- assertVisible: "Tạo danh sách mới"
+- tapOn: "Tạo danh sách mới"
+# Dialog title: "Tạo danh sách mua sắm"
+- assertVisible: "Tạo danh sách mua sắm"
+# Nhập tên — hint: "Ví dụ: Đi siêu thị cuối tuần"
+- tapOn: "Ví dụ: Đi siêu thị cuối tuần"
+- inputText: "Mua cuối tuần"
+# Nút xác nhận trong dialog là "Tạo"
+- tapOn: "Tạo"
+- assertVisible: "Mua cuối tuần"
