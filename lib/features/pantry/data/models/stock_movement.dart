@@ -1,15 +1,27 @@
 import 'package:flutter/foundation.dart';
 
-/// Loại biến động kho theo quy chuẩn schema.sql
+/// Loại biến động kho theo quy chuẩn Supabase PostgreSQL (`SPRINT_FINAL.md`) & `schema.sql`
 enum StockMovementType {
-  inStock('IN', 'Nhập kho'),
+  inStock('IMPORT', 'Nhập kho'),
   consume('CONSUME', 'Nấu ăn / Tiêu hao'),
   discard('DISCARD', 'Hỏng / Hủy bỏ'),
+  expired('EXPIRED', 'Quá hạn sử dụng'),
   adjust('ADJUST', 'Điều chỉnh');
 
   const StockMovementType(this.code, this.labelVi);
   final String code;
   final String labelVi;
+
+  static StockMovementType fromCode(String? rawCode) {
+    final normalized = (rawCode ?? 'IMPORT').trim().toUpperCase();
+    if (normalized == 'IN' || normalized == 'IMPORT') {
+      return StockMovementType.inStock;
+    }
+    return StockMovementType.values.firstWhere(
+      (e) => e.code == normalized,
+      orElse: () => StockMovementType.inStock,
+    );
+  }
 }
 
 /// Mô hình Biến động kho (bien_dong_kho)
@@ -48,22 +60,24 @@ class StockMovement {
   }
 
   factory StockMovement.fromMap(String id, Map<String, dynamic> map) {
-    final typeCode = map['loai_bien_dong'] as String? ?? 'IN';
-    final type = StockMovementType.values.firstWhere(
-      (e) => e.code == typeCode,
-      orElse: () => StockMovementType.inStock,
-    );
+    final type = StockMovementType.fromCode(map['loai_bien_dong'] as String?);
+    final rawTime = map['created_at'] ?? map['thoi_diem'];
+    DateTime parsedTime = DateTime.now();
+    if (rawTime is DateTime) {
+      parsedTime = rawTime.toLocal();
+    } else if (rawTime is String && rawTime.trim().isNotEmpty) {
+      parsedTime =
+          DateTime.tryParse(rawTime.trim())?.toLocal() ?? DateTime.now();
+    }
 
     return StockMovement(
       id: id,
-      batchId: map['ma_lo'] as String? ?? '',
-      foodName: map['ten_thuc_pham'] as String? ?? '',
+      batchId: (map['ma_lo'] ?? map['thuc_pham_id'])?.toString() ?? '',
+      foodName: map['ten_thuc_pham']?.toString() ?? '',
       type: type,
       inQuantity: (map['so_luong_nhap'] as num?)?.toDouble() ?? 0.0,
       outQuantity: (map['so_luong_xuat'] as num?)?.toDouble() ?? 0.0,
-      timestamp: map['thoi_diem'] != null
-          ? DateTime.tryParse(map['thoi_diem'] as String) ?? DateTime.now()
-          : DateTime.now(),
+      timestamp: parsedTime,
       note: map['ghi_chu'] as String?,
     );
   }

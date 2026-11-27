@@ -24,7 +24,9 @@ class AppColors {
   static const Color statusSuccess = Color(0xFF22C55E); // Còn hạn
   static const Color statusSuccessTint = Color(0xFFE7FAEE);
 
-  static const Color statusWarning = Color(0xFFF59E0B); // Sắp hết hạn (<= 3 ngày) / Sắp hết số lượng
+  static const Color statusWarning = Color(
+    0xFFF59E0B,
+  ); // Sắp hết hạn (<= 3 ngày) / Sắp hết số lượng
   static const Color statusWarningTint = Color(0xFFFEF5E2);
 
   static const Color statusDanger = Color(0xFFEF4444); // Đã hết hạn
@@ -32,4 +34,43 @@ class AppColors {
 
   static const Color statusPlanned = Color(0xFF2563EB); // Đã lên lịch
   static const Color statusPlannedTint = Color(0xFFEFF6FF);
+
+  /// Trả về icon đặc trưng theo từng danh mục thực phẩm
+  static IconData categoryIcon(String category) {
+    final lower = category.trim().toLowerCase();
+    if (lower.contains('uống') || lower.contains('sữa')) {
+      return Icons.local_drink_outlined;
+    }
+    if (lower.contains('thịt') ||
+        lower.contains('cá') ||
+        lower.contains('hải sản')) {
+      return Icons.set_meal_outlined;
+    }
+    if (lower.contains('rau') || lower.contains('củ')) {
+      return Icons.eco_outlined;
+    }
+    if (lower.contains('trái cây') || lower.contains('quả')) {
+      return Icons.spa_outlined;
+    }
+    if (lower.contains('trứng')) {
+      return Icons.egg_outlined;
+    }
+    if (lower.contains('gia vị')) {
+      return Icons.soup_kitchen_outlined;
+    }
+    if (lower.contains('khô') ||
+        lower.contains('gạo') ||
+        lower.contains('mì')) {
+      return Icons.rice_bowl_outlined;
+    }
+    if (lower.contains('bánh') ||
+        lower.contains('kẹo') ||
+        lower.contains('ăn vặt')) {
+      return Icons.cookie_outlined;
+    }
+    if (lower.contains('đông') || lower.contains('kem')) {
+      return Icons.ac_unit_rounded;
+    }
+    return Icons.kitchen_outlined;
+  }
 }

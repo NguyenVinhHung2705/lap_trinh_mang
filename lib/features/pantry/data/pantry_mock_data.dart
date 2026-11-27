@@ -41,7 +41,9 @@ class PantryMockData {
       baseUnit: 'hũ',
       minimumStock: 2.0,
       totalStock: 3.0,
-      closestExpiryDate: DateTime.now().subtract(const Duration(days: 1)), // Đã hết hạn
+      closestExpiryDate: DateTime.now().subtract(
+        const Duration(days: 1),
+      ), // Đã hết hạn
     ),
     FoodItem(
       id: 'food_5',
@@ -135,7 +137,7 @@ class PantryMockData {
       inQuantity: 0.0,
       outQuantity: 200.0,
       timestamp: DateTime.now().subtract(const Duration(hours: 3)),
-      note: 'Nấu Bữa tối: Cá hồi áp chảo (MOD-04 FEFO)',
+      note: 'Nấu bữa tối: Cá hồi áp chảo',
     ),
     StockMovement(
       id: 'mov_2',
@@ -145,7 +147,7 @@ class PantryMockData {
       inQuantity: 10.0,
       outQuantity: 0.0,
       timestamp: DateTime.now().subtract(const Duration(days: 2)),
-      note: 'Nhập hàng từ Danh sách mua sắm (MOD-02)',
+      note: 'Đồng bộ từ danh sách mua sắm',
     ),
   ];
 }
